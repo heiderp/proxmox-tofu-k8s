@@ -1,0 +1,27 @@
+# --- Secretos y estado local ---
+.envrc
+*.tfvars
+!*.tfvars.example
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+
+# --- Kubernetes / credenciales ---
+kubeconfig
+*.kubeconfig
+admin.conf
+pub-cert.pem
+*-BACKUP.yaml
+sealed-secrets-key*.yaml
+
+# --- Ansible ---
+*.retry
+ansible/inventory.local.yml
+
+# --- Notas de trabajo (no se publican) ---
+TODO.md
+
+# --- Sistema ---
+.DS_Store
+*.swp
