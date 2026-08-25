@@ -5,7 +5,7 @@
 .terraform/
 *.tfstate
 *.tfstate.*
-.terraform.lock.hcl
+# .terraform.lock.hcl SÍ se versiona: fija los hashes del provider (regla nº 6)
 
 # --- Kubernetes / credenciales ---
 kubeconfig
