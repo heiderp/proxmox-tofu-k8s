@@ -17,8 +17,8 @@ preparar el **CKA**.
 |---|---|---|
 | 0 | Verificación de hardware | ✅ |
 | 1 | Proxmox VE instalado y endurecido | ✅ |
-| 2 | Plantilla cloud-init reutilizable | 🔜 siguiente |
-| 3 | OpenTofu creando las VMs | ⬜ |
+| 2 | Plantilla cloud-init reutilizable | ✅ |
+| 3 | OpenTofu creando las VMs | 🔜 siguiente |
 | 4 | Cluster kubeadm funcionando | ⬜ |
 | 5 | ArgoCD y el loop de GitOps | ⬜ |
 | 6 | Plataforma: red, TLS, secretos | ⬜ |
@@ -108,6 +108,7 @@ proxmox-tofu-k8s/
 │   ├── bootstrap/        Application raíz (patrón app-of-apps)
 │   ├── infrastructure/   MetalLB, cert-manager, Envoy, Sealed Secrets, cloudflared
 │   └── apps/             Aplicaciones
+├── scripts/        Utilidades que corren en el host Proxmox, fuera de Kubernetes
 └── docs/
     ├── BITACORA.md              Fases, decisiones y trayectoria de lo ejecutado
     └── roadmap-homelab-k8s.md   Procedimiento completo con comandos

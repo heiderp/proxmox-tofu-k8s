@@ -84,14 +84,14 @@ Git. Todo lo demás es desechable; esto no. Por eso conviene dejarla bien y docu
 ```bash
 pveversion                       # devuelve la versión
 apt update                       # sin errores 401 del repo enterprise
-# y la UI responde en https://192.168.1.10:8006
+# y la UI responde en https://192.168.1.20:8006
 ```
 
 **Incidencias:** ninguna registrada.
 
 ---
 
-## Fase 2 — Plantilla cloud-init 🔜
+## Fase 2 — Plantilla cloud-init ✅
 
 **Qué construye:** una plantilla de VM (VMID 9000) de la que se clonan todos los nodos en
 segundos, ya con `qemu-guest-agent` dentro.
@@ -111,15 +111,41 @@ fase posterior.
 - **Consola serie (`--serial0 socket --vga serial0`)**: las imágenes cloud no arrancan una consola
   gráfica útil; sin esto no hay forma de depurar un arranque fallido.
 - **Autenticación solo por llave SSH** desde el primer minuto.
+- **Una llave dedicada, `~/.ssh/homelab`, y sin passphrase.** Dedicada porque un homelab
+  expuesto a internet (Fase 7) no debe compartir credencial con GitHub ni con AWS: si cae, cae
+  sólo esto. Sin passphrase porque Ansible (Fase 4) y el provisioner de OpenTofu (Fase 3)
+  conectan de forma no interactiva, y exigir `ssh-agent` cargado convierte cada reconstrucción
+  en un paso manual — justo lo que el criterio de éxito prohíbe. La privada no sale de la
+  máquina de trabajo; la pública vive en el host como `/root/homelab.pub`, que es lo que lee
+  `qm set --sshkeys`.
+- **El procedimiento se versiona como script, no como comandos sueltos.**
+  `scripts/fase2-plantilla.sh` sustituye a copiar y pegar del roadmap. Motivo: la plantilla se
+  va a rehacer (cambio de versión de Debian, ajuste de la imagen), y un procedimiento manual se
+  degrada en cada repetición.
+- **`build` y `test` son subcomandos separados.** Ningún comando destruye VMs salvo que se pida
+  explícitamente; el script aborta si el VMID 9000 ya existe en lugar de sobrescribirlo.
+- **`virt-customize` trabaja sobre una copia (`debian-13-work.qcow2`), no sobre la imagen
+  descargada.** Modifica in-place: sin la copia, una segunda ejecución acumula capas de cambios
+  sobre una imagen ya alterada y el resultado deja de ser reproducible.
+- **Almacenamiento `local-lvm`.** Consecuencia directa de la Fase 1 (ext4 + LVM-thin, no ZFS);
+  con ZFS los mismos comandos apuntarían a `local-zfs`.
 
 **Verificación / checkpoint:** clonar la plantilla a una VM de prueba, entrar por SSH sin
 contraseña y destruirla. Si eso funciona, la plantilla está bien.
 
-**Incidencias:** —
+**Resultado real (2026-08-24):** plantilla 9000 creada sobre `local-lvm` en PVE 9.2.11. El clon
+de prueba (VMID 199, `192.168.1.99`) tuvo el guest agent respondiendo a los **16 segundos** —
+muy por debajo del límite de 60 del checkpoint. SSH sin contraseña con `~/.ssh/homelab`,
+`qemu-guest-agent` en `active`, `machine-id` regenerado y único en el clon, y el `qm resize`
+reflejado dentro del invitado (raíz de 21 GB desde una imagen base de 3 GB, sin tocar nada a
+mano: cloud-init expande el sistema de ficheros al arrancar).
+
+**Incidencias:** ninguna. La única fricción es que `ssh-copy-id` contra el host exige teclear la
+contraseña de root una vez; no es automatizable ni conviene que lo sea.
 
 ---
 
-## Fase 3 — OpenTofu ⬜
+## Fase 3 — OpenTofu 🔜
 
 **Qué construye:** la definición declarativa de los tres nodos. `tofu apply` levanta el cluster
 de VMs; `tofu destroy` lo borra.
@@ -397,8 +423,8 @@ nadie intervenga.
 |---|---|---|---|
 | 0 — Hardware | ~2026-08 _(confirmar)_ | — | Prueba de `fio` sin registrar |
 | 1 — Proxmox VE | ~2026-08 _(confirmar)_ | — | ext4/LVM-thin, repos deb822, token `tofu@pve` creado |
-| 2 — Plantilla cloud-init | — | — | Siguiente |
-| 3 — OpenTofu | — | — | |
+| 2 — Plantilla cloud-init | 2026-08-24 | ~1 h | Plantilla 9000 sobre `local-lvm`; clon de prueba listo en 16 s |
+| 3 — OpenTofu | — | — | Siguiente |
 | 4 — kubeadm | — | — | |
 | 5 — ArgoCD | — | — | |
 | 6 — Plataforma | — | — | |

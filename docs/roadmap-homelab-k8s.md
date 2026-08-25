@@ -143,7 +143,7 @@ Mira el percentil 99 de `fsync/fdatasync`. **Debe estar por debajo de 10 ms.** S
 Anota antes de empezar:
 
 - Rango de tu LAN (ej. `192.168.1.0/24`)
-- IP fija para Proxmox (ej. `192.168.1.10`)
+- IP fija para Proxmox (en este homelab, `192.168.1.20`)
 - **Rango reservado para las VMs** (ej. `192.168.1.50-59`) — configura una exclusión en el DHCP de tu router
 - **Rango reservado para MetalLB** (ej. `192.168.1.200-220`) — también fuera del DHCP
 
@@ -249,7 +249,7 @@ pveum user token add tofu@pve tofu-token --privsep 0
 ### 1.5 Snapshot mental del estado
 
 Verifica que puedes:
-- Entrar a `https://192.168.1.10:8006`
+- Entrar a `https://192.168.1.20:8006`
 - Hacer SSH como root
 - `pveversion` devuelve la versión
 
@@ -260,6 +260,44 @@ Verifica que puedes:
 # Fase 2 — Plantilla cloud-init
 
 Esta plantilla es la base de todas las VMs. Hacerla bien ahorra horas después.
+
+Todo lo que sigue, salvo el paso 2.0, se ejecuta **en el host Proxmox** (`192.168.1.20`, como
+`root`). El almacenamiento es `local-lvm`: la instalación es ext4 + LVM-thin, no ZFS — con ZFS
+sería `local-zfs`.
+
+### 2.0 Llave SSH del homelab
+
+Todo el acceso posterior — al host, a las VMs, desde Ansible y desde OpenTofu — usa una única
+llave dedicada. En **tu máquina de trabajo**:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/homelab -C "homelab" -N ""
+```
+
+`-N ""` la deja **sin passphrase**: Ansible (Fase 4) y el provisioner de OpenTofu (Fase 3)
+conectan de forma no interactiva, y con passphrase harían falta `ssh-agent` cargado en cada
+sesión. La privada no sale nunca de la máquina de trabajo; si esa máquina se ve comprometida,
+el homelab entero también, así que la llave es exclusiva de este proyecto — no se reutiliza la
+de GitHub ni la de AWS.
+
+Atajo de acceso al host, en `~/.ssh/config`:
+
+```
+Host pve
+    HostName 192.168.1.20
+    User root
+    IdentityFile ~/.ssh/homelab
+```
+
+Autorizar la llave en el host (pide la contraseña de root una única vez) y dejar la pública
+donde `qm set --sshkeys` la va a leer:
+
+```bash
+ssh-copy-id -i ~/.ssh/homelab.pub root@192.168.1.20
+scp ~/.ssh/homelab.pub pve:/root/homelab.pub
+```
+
+A partir de aquí, `ssh pve` entra sin contraseña.
 
 ### 2.1 Descargar una imagen cloud
 
@@ -311,14 +349,12 @@ qm set $VMID --boot order=scsi0
 # Consola serie (necesaria en imágenes cloud)
 qm set $VMID --serial0 socket --vga serial0
 
-# Usuario y llave SSH por defecto
-qm set $VMID --ciuser debian --sshkeys ~/.ssh/id_ed25519.pub
+# Usuario y llave SSH por defecto (la pública copiada en el paso 2.0)
+qm set $VMID --ciuser debian --sshkeys /root/homelab.pub
 
 # Convertir en plantilla
 qm template $VMID
 ```
-
-> Si no tienes llave SSH aún: `ssh-keygen -t ed25519 -C "homelab"` en tu máquina de trabajo, y copia la pública al host de Proxmox.
 
 ### 2.4 Probar la plantilla
 
@@ -329,11 +365,41 @@ qm resize 199 scsi0 +18G
 qm start 199
 ```
 
-Espera un minuto y verifica: `ssh debian@192.168.1.99`. Si entra sin contraseña, la plantilla está bien.
+Espera un minuto y verifica desde la máquina de trabajo:
+
+```bash
+ssh -i ~/.ssh/homelab debian@192.168.1.99 'systemctl is-active qemu-guest-agent'
+```
+
+Si entra sin contraseña y responde `active`, la plantilla está bien.
 
 ```bash
 qm stop 199 && qm destroy 199
 ```
+
+### 2.5 Automatización
+
+Los pasos 2.1-2.4 están recogidos en [`scripts/fase2-plantilla.sh`](../scripts/fase2-plantilla.sh),
+que se copia al host y se ejecuta ahí como root:
+
+```bash
+scp scripts/fase2-plantilla.sh pve:/root/
+ssh pve '/root/fase2-plantilla.sh build'   # imagen + virt-customize + plantilla 9000
+ssh pve '/root/fase2-plantilla.sh test'    # clona a 199, arranca y cronometra el checkpoint
+ssh pve '/root/fase2-plantilla.sh clean'   # destruye la VM 199
+```
+
+Detalles que conviene conocer antes de ejecutarlo:
+
+- **`build` y `test` van separados** a propósito: ningún comando destruye VMs si no se lo pides.
+- **Aborta si el VMID 9000 ya existe.** Para rehacer la plantilla, `qm destroy 9000` primero.
+- Verifica la imagen descargada contra `SHA512SUMS` y **trabaja sobre una copia**
+  (`debian-13-work.qcow2`), porque `virt-customize` modifica la imagen in-place: sin la copia,
+  una segunda ejecución acumularía capas de cambios sobre una imagen ya alterada.
+- Todo es configurable por variables de entorno: `VMID`, `STORAGE`, `BRIDGE`, `CIUSER`,
+  `PUBKEY`, `MEMORY`, `CORES`, `TEST_VMID`, `TEST_IP`, `TEST_GW`, `TEST_TIMEOUT`.
+- Comprueba antes de tocar nada que existe `libguestfs-tools`, que el almacenamiento indicado
+  aparece en `pvesm status` y que la llave pública está en `/root/homelab.pub`.
 
 **Checkpoint Fase 2:** puedes clonar una VM funcional con SSH y guest agent en menos de 60 segundos.
 
@@ -388,7 +454,7 @@ terraform {
 }
 
 provider "proxmox" {
-  endpoint  = var.pve_endpoint          # https://192.168.1.10:8006/
+  endpoint  = var.pve_endpoint          # https://192.168.1.20:8006/
   api_token = var.pve_api_token
   insecure  = true                      # cert autofirmado
   ssh {
