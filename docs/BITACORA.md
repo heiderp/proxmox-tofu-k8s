@@ -42,10 +42,28 @@ sudo fio --name=etcd-test --rw=write --ioengine=sync --fdatasync=1 \
   --size=200m --bs=2300 --filename=/tmp/testfile                    # p99 < 10 ms
 ```
 
+**Resultado real (2026-08-25):** la prueba de `fio` se ejecutó retroactivamente, antes de empezar
+la Fase 3. SSD de 119 GB (`GIT128-L130-2280`, M.2 no rotacional). Latencia de `fdatasync`:
+
+| Percentil | Latencia |
+|---|---|
+| p99 | **1,34 ms** |
+| p99.9 | 6,52 ms |
+| p99.95 | 8,59 ms |
+| p99.99 | 18,22 ms |
+
+El p99 queda 7,5 veces por debajo del umbral de 10 ms. La cola extrema (p99.99) lo supera, pero a
+ese percentil etcd tolera picos aislados. **El disco no es un riesgo para el proyecto.** Si en la
+Fase 4 aparecen timeouts de elección de líder, la causa no está aquí.
+
 **Incidencias:**
 
-- _Pendiente de confirmar:_ no consta si la prueba de `fio` llegó a ejecutarse. Si aparecen
-  timeouts de etcd en la Fase 4, este es el primer sitio donde mirar.
+- **La primera medición fue inválida y daba un falso positivo espectacular.** El comando del
+  roadmap escribe en `/tmp`, y en Debian 13 (trixie) **`/tmp` es `tmpfs`** por defecto — o sea,
+  RAM. El resultado fue 1220 MiB/s con latencias de `fsync` en *nanosegundos*, cifras imposibles
+  para cualquier SSD. La pista que delata el error es la unidad: si `fio` reporta las
+  `sync percentiles` en `nsec` en vez de `usec`, no estás midiendo el disco. La medida buena se
+  hizo sobre `/var/lib/vz` (que vive en `pve-root`, el mismo SSD físico que `local-lvm`).
 
 ---
 
@@ -78,6 +96,15 @@ Git. Todo lo demás es desechable; esto no. Por eso conviene dejarla bien y docu
   privilegios es exactamente el músculo que pide el dominio *Cluster Architecture* del CKA.
 - **El valor del token vive en el gestor de contraseñas, nunca en el repo.** Proxmox solo lo
   muestra una vez.
+
+> **Corrección posterior (2026-08-25, al preparar la Fase 3):** la lista de privilegios de arriba
+> estaba incompleta. Faltaba el permiso para consultar el guest agent, sin el cual el provider no
+> puede leer las IPs de las VMs. Se añadió **`VM.GuestAgent.Audit`** (19 privilegios en total).
+> El detalle está en la Fase 3. Estado actual del rol:
+>
+> ```bash
+> ssh pve 'pveum role list | grep -i provisioner'
+> ```
 
 **Verificación:**
 
@@ -171,6 +198,61 @@ VMs idénticas. Ese ciclo es el que convierte la infraestructura en algo desecha
   de VM en cada plan.
 - **`outputs.tf` expone las IPs de los nodos** para alimentar el inventario de Ansible sin
   duplicar la lista a mano.
+
+**Verificación previa (2026-08-25).** Antes de escribir una línea de HCL se comprobó el terreno.
+Cuatro cosas no cuadraban con lo que el roadmap daba por supuesto:
+
+- **El privilegio `VM.Monitor` ya no existe en PVE 9.** El rol `Provisioner` de la Fase 1 no podía
+  leer el guest agent, que es justo de donde salen las IPs de las VMs. Proxmox lo sustituyó por la
+  familia `VM.GuestAgent.*` (`.Audit`, `.FileRead`, `.FileWrite`, `.FileSystemMgmt`,
+  `.Unrestricted`). Se añadió **`VM.GuestAgent.Audit`** al rol, que es el mínimo para consultar
+  `network-get-interfaces`. Sin él, el `read` del recurso devuelve 403 y `outputs.tf` queda
+  inservible — con el agravante de que el fallo aparece *después* de crear las VMs, no en el plan.
+- **El thin pool no daba para los discos del roadmap.** `local-lvm` tenía 53,87 GB frente a los
+  100 GB de 40/30/30. LVM-thin permite sobreaprovisionar, pero un pool al 100% no da error: pasa a
+  errores de I/O y **corrompe todas las VMs a la vez**. Se resolvió por los dos lados: extender el
+  pool a **66,87 GB** con los 14,63 GB que quedaban sin asignar en el VG, y bajar los discos a
+  **25/20/20 = 65 GB**. Queda prácticamente 1:1, sin depender de la vigilancia de nadie. Se dejaron
+  1,63 GB libres en el VG por si el LV de metadatos necesita crecer.
+
+  > Ojo al reconstruir el host: **un thin pool se puede extender pero no reducir.** El VG ya no
+  > tiene margen (1,63 GB), así que a partir de aquí ampliar `local-lvm` exige recortar `pve/root`
+  > (39,5 GB, con 30 GB libres) o añadir un disco. No es un problema hoy; sí lo sería descubrirlo
+  > con el cluster montado.
+- **El provider iba 45 versiones por detrás.** El roadmap fija `~> 0.66`; la versión publicada es
+  la 0.111.1. El HCL del roadmap es un punto de partida, no un copia-pega.
+- **`.terraform.lock.hcl` estaba en `.gitignore`.** Contradice la regla nº 6 del README. El
+  lockfile es precisamente lo que fija los hashes del provider entre máquinas; se sacó.
+
+Lo que sí estaba correcto: RAM (15,7 GB, ~6 de margen), IPs `.51`-`.53` libres, `vmbr0` en
+`192.168.1.20/24`, plantilla 9000 con `agent=1` y cloud-init en `ide2`, nodo llamado `pve`, y la
+API respondiendo con su cert autofirmado (`CN=pve.homelab.local`, válido hasta 2028) — que es lo
+que justifica el `insecure = true` del provider.
+
+**Decisiones añadidas tras la verificación:**
+
+- **`ssh { agent = false }` con `private_key` explícita.** El main.tf del roadmap usa
+  `agent = true`, lo que reintroduce la dependencia de `ssh-agent` que la Fase 2 eliminó a
+  propósito al crear la llave sin passphrase. Coherencia: la llave se pasa por ruta.
+- **`stop_on_destroy = true` y `on_boot = true`.** El primero evita que `destroy` se cuelgue
+  esperando un apagado ACPI — y `destroy` es literalmente la mitad del checkpoint de esta fase.
+  El segundo, que un reboot del host deje el cluster caído.
+- **`initialization` con `datastore_id` e `interface` explícitos.** La plantilla ya trae un drive
+  cloud-init en `ide2`; si el provider no lo reconoce como suyo, cada `plan` propone recrear la VM
+  y la idempotencia nunca se alcanza.
+- **`outputs.tf` lee `ipv4_addresses` del recurso, no de `locals`.** El output del roadmap devuelve
+  la misma lista que se escribió a mano: no verifica nada. Leyéndolo del recurso, el output falla
+  si una VM no arrancó, en vez de pasarle a Ansible una IP que no responde.
+- **OpenTofu 1.12.6 instalado en modo standalone**, en `~/.local`, sin privilegios de root. El
+  instalador oficial aborta con `The release is signed with the incorrect key:` en sistemas con
+  GPG 2.4+ y `keyboxd` (Arch): la firma **sí** verifica, pero el script no sabe extraer el keyid
+  del keyring y compara contra una cadena vacía. Se instaló a mano verificando la firma
+  (`E3E6E43D84CB852EADB0051D0C0AF313E5FD9F80`) y el SHA256 por separado. Comprobado después con un
+  `tofu init` de prueba: resuelve y descarga `bpg/proxmox 0.111.1` sin incidencias.
+
+  > Está en `~/.local/opentofu` con symlink en `~/.local/bin/tofu`, no en `/usr/local/bin`: `sudo`
+  > pide contraseña en esta máquina y la instalación no la necesita. Para actualizar, repetir el
+  > procedimiento manual — no hay repo de apt detrás.
 
 **Verificación / checkpoint:** `tofu destroy && tofu apply` devuelve tres VMs accesibles por SSH,
 y todo el código está en Git salvo secretos.
@@ -421,10 +503,10 @@ nadie intervenga.
 
 | Fase | Fecha | Duración real | Notas |
 |---|---|---|---|
-| 0 — Hardware | ~2026-08 _(confirmar)_ | — | Prueba de `fio` sin registrar |
-| 1 — Proxmox VE | ~2026-08 _(confirmar)_ | — | ext4/LVM-thin, repos deb822, token `tofu@pve` creado |
+| 0 — Hardware | ~2026-08 _(confirmar)_ | — | `fio` ejecutado el 2026-08-25: p99 de `fdatasync` = 1,34 ms |
+| 1 — Proxmox VE | ~2026-08 _(confirmar)_ | — | ext4/LVM-thin, repos deb822, token `tofu@pve` creado. Rol ampliado el 2026-08-25 |
 | 2 — Plantilla cloud-init | 2026-08-24 | ~1 h | Plantilla 9000 sobre `local-lvm`; clon de prueba listo en 16 s |
-| 3 — OpenTofu | — | — | Siguiente |
+| 3 — OpenTofu | 2026-08-25 → _(en curso)_ | — | Verificaciones previas cerradas; falta confirmar el DHCP del router |
 | 4 — kubeadm | — | — | |
 | 5 — ArgoCD | — | — | |
 | 6 — Plataforma | — | — | |
@@ -451,6 +533,25 @@ Problemas que no pertenecen a una sola fase. El más probable, por diseño de la
 > free -h
 > ```
 
+El segundo, descubierto al preparar la Fase 3 y con efecto directo sobre la Fase 9:
+
+> **Los discos de las VMs son thin-provisioned: llenar uno llena el pool del host.**
+> El escenario 7 de la Fase 9 ("llenar el disco de un nodo para provocar `DiskPressure`") parece
+> local a una VM y no lo es. Los 65 GB repartidos entre los tres nodos salen de un único thin pool
+> de 66,87 GB, y **un thin pool al 100% no devuelve `ENOSPC` limpio: devuelve errores de I/O y
+> corrompe todas las VMs a la vez**, incluidas las otras dos y cualquier snapshot que viva ahí.
+>
+> Ese escenario se practica con un `fallocate` acotado (unos cientos de MB por encima del umbral
+> de `evictionHard`), nunca llenando la raíz del invitado. Antes de empezar, mirar el margen:
+>
+> ```bash
+> ssh pve 'lvs pve/data -o lv_name,lv_size,data_percent,metadata_percent --units g'
+> ```
+>
+> Si `data_percent` pasa del 80%, parar y hacer `fstrim` en los invitados antes de seguir.
+
 | Fecha | Síntoma | Causa real | Solución |
 |---|---|---|---|
-| — | — | — | — |
+| 2026-08-25 | `fio` daba 1220 MiB/s y `fsync` en nanosegundos | El test escribía en `/tmp`, que es `tmpfs` en Debian 13 | Repetir sobre `/var/lib/vz`: p99 real de 1,34 ms |
+| 2026-08-25 | `pveum role modify` → `invalid privilege 'VM.Monitor'` | PVE 9 eliminó `VM.Monitor`, sustituido por `VM.GuestAgent.*` | Usar `VM.GuestAgent.Audit` |
+| 2026-08-25 | `install-opentofu.sh` → `The release is signed with the incorrect key: ` | Bug del instalador con GPG 2.4+ y `keyboxd`; la firma es válida | Instalación manual verificando firma y SHA256 aparte |

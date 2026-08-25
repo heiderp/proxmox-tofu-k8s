@@ -61,11 +61,14 @@ en [`docs/BITACORA.md`](docs/BITACORA.md). El procedimiento paso a paso, con com
 
 | Nodo | Rol | vCPU | RAM | Disco | IP |
 |---|---|---|---|---|---|
-| `k8s-cp-1` | control plane | 2 | 4096 MB | 40 GB | 192.168.1.51 |
-| `k8s-wk-1` | worker | 2 | 2048 MB | 30 GB | 192.168.1.52 |
-| `k8s-wk-2` | worker | 2 | 2048 MB | 30 GB | 192.168.1.53 |
+| `k8s-cp-1` | control plane | 2 | 4096 MB | 25 GB | 192.168.1.51 |
+| `k8s-wk-1` | worker | 2 | 2048 MB | 20 GB | 192.168.1.52 |
+| `k8s-wk-2` | worker | 2 | 2048 MB | 20 GB | 192.168.1.53 |
 
 Rangos reservados fuera del DHCP: `.50-.59` para las VMs, `.200-.220` para MetalLB.
+
+Host: 15,7 GB de RAM, 4 cores, SSD de 119 GB. Los 65 GB de disco salen de un thin pool de
+66,87 GB — casi 1:1 a propósito: un thin pool lleno corrompe las tres VMs a la vez, no una.
 
 ---
 
