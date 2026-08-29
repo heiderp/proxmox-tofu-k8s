@@ -1,0 +1,16 @@
+# Copiar a terraform.tfvars (ignorado por Git) y rellenar.
+
+pve_api_token = "tofu@pve!tofu-token=00000000-0000-0000-0000-000000000000"
+
+# Contenido de la llave pública, no la ruta:
+#   ssh_public_key = file("~/.ssh/homelab.pub")   <-- NO, file() no va en tfvars
+ssh_public_key = "ssh-ed25519 AAAA... homelab"
+
+# Los demás valores tienen default en variables.tf:
+# pve_endpoint         = "https://192.168.1.20:8006/"
+# pve_node             = "pve"
+# datastore_id         = "local-lvm"
+# template_vm_id       = 9000
+# gateway              = "192.168.1.1"
+# dns_servers          = ["192.168.1.1"]
+# ssh_private_key_path = "~/.ssh/homelab"

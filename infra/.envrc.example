@@ -1,0 +1,22 @@
+# Copiar a infra/.envrc (ignorado por Git) y poner una frase larga guardada en
+# el gestor de contraseñas. Sin esta variable OpenTofu escribe el state EN
+# CLARO y sin avisar — y el state contiene el token de la API de Proxmox.
+#
+# direnv no está instalado: por ahora `source .envrc` a mano antes de cada tofu.
+
+export TF_ENCRYPTION='
+key_provider "pbkdf2" "homelab" {
+  passphrase = "CAMBIAR-por-una-frase-larga-y-aleatoria"
+}
+method "aes_gcm" "default" {
+  keys = key_provider.pbkdf2.homelab
+}
+state {
+  method   = method.aes_gcm.default
+  enforced = true
+}
+plan {
+  method   = method.aes_gcm.default
+  enforced = true
+}
+'

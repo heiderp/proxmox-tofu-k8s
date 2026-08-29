@@ -172,7 +172,7 @@ contraseña de root una vez; no es automatizable ni conviene que lo sea.
 
 ---
 
-## Fase 3 — OpenTofu 🔜
+## Fase 3 — OpenTofu ✅
 
 **Qué construye:** la definición declarativa de los tres nodos. `tofu apply` levanta el cluster
 de VMs; `tofu destroy` lo borra.
@@ -257,11 +257,42 @@ que justifica el `insecure = true` del provider.
 **Verificación / checkpoint:** `tofu destroy && tofu apply` devuelve tres VMs accesibles por SSH,
 y todo el código está en Git salvo secretos.
 
-**Incidencias:** —
+**Resultado real (2026-08-28):** las tres VMs se crearon al primer intento útil y el ciclo completo
+`destroy` + `apply` tardó **48 segundos** (5 s de destrucción, 43 s de reconstrucción). Los nodos
+quedaron con lo declarado — `k8s-cp-1` 3922 MB / 25 GB, `k8s-wk-1` y `k8s-wk-2` 1974 MB / 20 GB,
+guest agent `active` en los tres y `machine-id` distintos entre sí. `tofu plan` en vacío devuelve
+`No changes` tanto tras el primer `apply` como tras el ciclo: la idempotencia es real, no aparente.
+
+Las IPs de `outputs.tf` (`.51`/`.52`/`.53`) las reporta el guest agent, así que el output prueba de
+paso que cloud-init aplicó la configuración estática. Thin pool tras el `apply`: **8,26 %** de
+66,87 GB — los discos son thin, el consumo real crecerá con el uso, no con la reserva.
+
+**Cifrado de state verificado (3.7b):** `terraform.tfstate` empieza por
+`"meta": { "key_provider.pbkdf2.homelab": ... }` y contiene `encrypted_data`; `grep tofu@pve` sobre
+él no devuelve nada. El token de la API no está en claro en disco. La passphrase se generó con
+`openssl rand -base64 32` y vive en `infra/.envrc` (modo 600, ignorado por Git) — hay que copiarla
+al gestor de contraseñas: **sin ella el state es irrecuperable y las VMs quedan huérfanas del
+código**.
+
+**Incidencias:**
+
+- **`connect: no route to host` contra `192.168.1.20:8006` en el primer `apply`, con el host
+  respondiendo a `ping` sin pérdidas.** Fallo transitorio de red en la máquina de trabajo, que
+  tiene un túnel VPN (`surfshark`) levantado; el mismo comando funcionó sin cambios un minuto
+  después. Lo importante: **el `plan` no lo detecta**. Con el state vacío no hay ningún `read` que
+  hacer, así que `plan` sale limpio sin haber tocado la API y el error aparece por primera vez en
+  el `apply`. Para descartar la conectividad antes de aplicar sirve
+  `curl -sk https://192.168.1.20:8006/`, no `ping`.
+- **`Host key verification failed` en los tres nodos después del ciclo `destroy`/`apply`.** Es
+  correcto, no un fallo: las VMs son nuevas y generan host keys nuevas, pero `~/.ssh/known_hosts`
+  guarda las anteriores para las mismas IPs. Se resuelve con `ssh-keygen -R <ip>`. Tiene
+  consecuencia directa en la Fase 4: **Ansible fallará igual en cada reconstrucción**, así que su
+  configuración necesita `host_key_checking = False` (o limpiar `known_hosts` como paso previo del
+  playbook).
 
 ---
 
-## Fase 4 — Cluster Kubernetes con kubeadm ⬜
+## Fase 4 — Cluster Kubernetes con kubeadm 🔜
 
 **Qué construye:** el cluster en sí: un control plane, dos workers, red de pods funcionando.
 
@@ -506,7 +537,7 @@ nadie intervenga.
 | 0 — Hardware | ~2026-08 _(confirmar)_ | — | `fio` ejecutado el 2026-08-25: p99 de `fdatasync` = 1,34 ms |
 | 1 — Proxmox VE | ~2026-08 _(confirmar)_ | — | ext4/LVM-thin, repos deb822, token `tofu@pve` creado. Rol ampliado el 2026-08-25 |
 | 2 — Plantilla cloud-init | 2026-08-24 | ~1 h | Plantilla 9000 sobre `local-lvm`; clon de prueba listo en 16 s |
-| 3 — OpenTofu | 2026-08-25 → _(en curso)_ | — | Verificaciones previas cerradas; falta confirmar el DHCP del router |
+| 3 — OpenTofu | 2026-08-25 → 2026-08-28 | — | 3 VMs desde código; ciclo `destroy`+`apply` en 48 s; state cifrado verificado |
 | 4 — kubeadm | — | — | |
 | 5 — ArgoCD | — | — | |
 | 6 — Plataforma | — | — | |
@@ -555,3 +586,5 @@ El segundo, descubierto al preparar la Fase 3 y con efecto directo sobre la Fase
 | 2026-08-25 | `fio` daba 1220 MiB/s y `fsync` en nanosegundos | El test escribía en `/tmp`, que es `tmpfs` en Debian 13 | Repetir sobre `/var/lib/vz`: p99 real de 1,34 ms |
 | 2026-08-25 | `pveum role modify` → `invalid privilege 'VM.Monitor'` | PVE 9 eliminó `VM.Monitor`, sustituido por `VM.GuestAgent.*` | Usar `VM.GuestAgent.Audit` |
 | 2026-08-25 | `install-opentofu.sh` → `The release is signed with the incorrect key: ` | Bug del instalador con GPG 2.4+ y `keyboxd`; la firma es válida | Instalación manual verificando firma y SHA256 aparte |
+| 2026-08-28 | `tofu apply` → `dial tcp 192.168.1.20:8006: connect: no route to host`, con `ping` OK | Corte transitorio de red en la máquina de trabajo (túnel VPN activo). El `plan` no lo detecta: con state vacío no consulta la API | Reintentar. Comprobar antes con `curl -sk https://192.168.1.20:8006/`, no con `ping` |
+| 2026-08-28 | `Host key verification failed` en `.51`-`.53` tras `destroy`+`apply` | VMs nuevas = host keys nuevas para IPs ya conocidas | `ssh-keygen -R <ip>`. En la Fase 4, Ansible necesitará `host_key_checking = False` |
