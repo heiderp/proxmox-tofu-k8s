@@ -1,0 +1,12 @@
+# Reservas del control plane (4 GB): más generosas que las de worker porque el
+# apiserver es volátil en consumo. Se aplican sólo a este nodo.
+# Reaplicar con `kubeadm upgrade apply --patches /etc/kubernetes/patches`.
+systemReserved:
+  memory: "300Mi"
+  cpu: "200m"
+kubeReserved:
+  memory: "400Mi"
+  cpu: "200m"
+evictionHard:
+  memory.available: "300Mi"
+  nodefs.available: "10%"

@@ -1,0 +1,45 @@
+# Config de `kubeadm init` para k8s-cp-1.
+#
+# El KubeletConfiguration de aquí abajo lleva los valores de WORKER a propósito:
+# kubeadm lo sube al ConfigMap `kubelet-config` del namespace kube-system, que es
+# común a todo el cluster y el que kubeadm respeta en cada `upgrade`. El control
+# plane necesita reservas mayores, y ésas van como patch local (ver
+# kubelet-patches/) porque son específicas de este nodo.
+#
+# Editar /var/lib/kubelet/config.yaml a mano NO vale: kubeadm lo regenera en cada
+# upgrade y las reservas se pierden en silencio.
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: 192.168.1.51
+  bindPort: 6443
+nodeRegistration:
+  name: k8s-cp-1
+  criSocket: unix:///run/containerd/containerd.sock
+patches:
+  directory: /etc/kubernetes/patches
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+kubernetesVersion: v1.35.8
+controlPlaneEndpoint: 192.168.1.51:6443
+networking:
+  podSubnet: 10.244.0.0/16
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: systemd
+# Reservas de worker (2 GB). Sin ellas decide el kernel cuando falta memoria, y
+# el OOM killer suele elegir mal: mata al kubelet o a containerd. Con reservas,
+# el kubelet desaloja pods de forma ordenada antes de llegar a ese punto.
+systemReserved:
+  memory: "200Mi"
+  cpu: "100m"
+kubeReserved:
+  memory: "100Mi"
+  cpu: "100m"
+evictionHard:
+  memory.available: "150Mi"
+  nodefs.available: "10%"
+evictionMinimumReclaim:
+  memory.available: "100Mi"

@@ -1,0 +1,44 @@
+# Cilium en modo slim, ajustado al presupuesto de 2 GB por worker.
+#
+# Por qué Cilium y no Flannel: Flannel consume ~50 MB frente a ~250 MB de Cilium,
+# pero NO implementa NetworkPolicy — los objetos se crean, se aceptan y se ignoran
+# en silencio. NetworkPolicy es material de examen (Services & Networking, 20%),
+# así que estudiar con Flannel sería practicar contra falsos positivos.
+#
+# Estos valores los consume `helm install` en la Fase 4 y los adopta ArgoCD como
+# Application en la Fase 5, sin reescribirlos.
+
+# El CIDR debe coincidir con networking.podSubnet de ansible/files/kubeadm-config.yaml
+ipam:
+  mode: cluster-pool
+  operator:
+    clusterPoolIPv4PodCIDRList:
+      - 10.244.0.0/16
+
+# Hubble apagado ahorra ~200 MB por nodo. Reactivar el día que haya más RAM:
+#   helm upgrade ... --set hubble.enabled=true --set hubble.ui.enabled=true
+hubble:
+  enabled: false
+  relay:
+    enabled: false
+  ui:
+    enabled: false
+
+operator:
+  # Un solo nodo de control plane: dos réplicas no aportan nada y una queda Pending.
+  replicas: 1
+  resources:
+    limits:
+      memory: 128Mi
+    requests:
+      memory: 64Mi
+
+# Agente Cilium (DaemonSet, corre en los tres nodos)
+resources:
+  limits:
+    memory: 300Mi
+  requests:
+    memory: 150Mi
+
+# Se mantiene kube-proxy, el que instala kubeadm: es lo estándar y lo que el
+# examen asume. kubeProxyReplacement se deja para cuando sobre RAM.

@@ -1,0 +1,18 @@
+# Las IPs las fija cloud-init desde infra/main.tf (locals.nodes) y las confirma
+# `tofu output node_ips`. Si aquí y allí no coinciden, manda OpenTofu.
+all:
+  vars:
+    ansible_user: debian
+    ansible_ssh_private_key_file: ~/.ssh/homelab
+    ansible_python_interpreter: /usr/bin/python3
+  children:
+    control_plane:
+      hosts:
+        k8s-cp-1:
+          ansible_host: 192.168.1.51
+    workers:
+      hosts:
+        k8s-wk-1:
+          ansible_host: 192.168.1.52
+        k8s-wk-2:
+          ansible_host: 192.168.1.53

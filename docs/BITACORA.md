@@ -292,7 +292,7 @@ código**.
 
 ---
 
-## Fase 4 — Cluster Kubernetes con kubeadm 🔜
+## Fase 4 — Cluster Kubernetes con kubeadm ✅ _(pasos 4.1-4.9; falta 4.10, Ansible)_
 
 **Qué construye:** el cluster en sí: un control plane, dos workers, red de pods funcionando.
 
@@ -326,10 +326,85 @@ para entenderlo, y *después* se convierte en rol de Ansible.
 - **Snapshot `cluster-limpio` de las tres VMs, apagadas, al terminar la fase.** Es la red de
   seguridad de toda la Fase 9: cada escenario de destrucción termina con un `qm rollback`.
 
-**Verificación / checkpoint:** `kubectl get nodes` muestra tres nodos `Ready`, y existe el
-snapshot al que volver.
+**Decisiones añadidas al ejecutar (2026-08-28):**
 
-**Incidencias:** —
+- **Kubernetes v1.35, no la v1.34 del roadmap.** v1.35 es la versión sobre la que está el examen
+  CKA hoy; el roadmap se escribió cuando la actual era otra. Además deja v1.36 y v1.37 ya
+  publicadas por delante, así que el escenario 10 de la Fase 9 (`kubeadm upgrade`) se practica de
+  verdad en vez de servir para ponerse al día. Instalado: **v1.35.8**.
+- **Cilium por Helm con `values.yaml` versionado**, no `cilium install`. Los límites y el modo
+  slim viven en `gitops/infrastructure/cilium/values.yaml`, que la Fase 5 adopta como Application
+  de Argo sin reescribir nada. Es la misma regla que ya estaba escrita para ArgoCD: la
+  configuración no vive en comandos sueltos. Instalado: **chart 1.20.1**, con la versión fijada.
+- **Las reservas del kubelet NO se editan en `/var/lib/kubelet/config.yaml`.** Ese archivo lo
+  regenera `kubeadm` en cada `upgrade`, así que la edición manual que propone el roadmap se
+  perdería justo en el escenario 10 de la Fase 9, y en silencio. En su lugar:
+  las reservas de **worker** van en el `KubeletConfiguration` de
+  `ansible/files/kubeadm-config.yaml` (kubeadm las sube al ConfigMap `kubelet-config`, común al
+  cluster y respetado en los upgrades), y las del **control plane** como *patch* en
+  `/etc/kubernetes/patches/`, que se reaplica con `kubeadm upgrade apply --patches`.
+- **La configuración de `kubeadm init` se versiona como archivo, no como flags.**
+  `kubeadm init --config` en vez de una fila de `--pod-network-cidr --apiserver-advertise-address
+  ...`. Motivo: los flags no se pueden parchear ni releer, y la Fase 9 va a reconstruir este
+  cluster muchas veces.
+
+**Resultado real (2026-08-28):** tres nodos `Ready` con v1.35.8 sobre containerd 1.7.24.
+
+| Nodo | Capacity | Allocatable | Reservado |
+|---|---|---|---|
+| `k8s-cp-1` | 3922 MiB | 2922 MiB | 1000 MiB (300 system + 400 kube + 300 eviction) |
+| `k8s-wk-1` / `k8s-wk-2` | 1974 MiB | 1524 MiB | 450 MiB (200 + 100 + 150) |
+
+Las reservas se aplicaron exactamente como se declararon, y `allocatable` queda por debajo de
+`capacity` en los tres nodos — que es la comprobación que importa. Verificado además con tráfico
+real, no sólo con `kubectl get nodes`: ping entre dos pods en **nodos distintos** (0 % de pérdida),
+resolución de `kubernetes.default` contra CoreDNS y salida a DNS externo. Y una `NetworkPolicy`
+`deny-all` cortó el tráfico (100 % de pérdida) y al borrarla volvió a 0 % — o sea, **Cilium
+aplica NetworkPolicy de verdad**, que es exactamente la razón por la que se descartó Flannel.
+
+Thin pool tras instalar el cluster y tomar los snapshots: **19,9 %** de 66,87 GB (venía del 8,3 %).
+RAM del host con las tres VMs arriba: 9,8 GB de 15,7 GB.
+
+**Snapshot `cluster-limpio`** creado en 101/102/103 con las VMs apagadas. Al arrancarlas, el
+cluster se recompuso solo: los pods pasan por `Unknown` unos segundos mientras el kubelet vuelve a
+reportar, y luego todo queda `Running` sin intervención.
+
+**Incidencias:**
+
+- **`nodeRegistration.patches` no existe en la API `v1beta4` de kubeadm — y kubeadm no lo dice.**
+  Es un campo de `v1beta3`. Con `v1beta4` hay que declararlo como `patches:` a nivel raíz de
+  `InitConfiguration`. Lo grave es cómo falla: kubeadm degrada el campo desconocido a un *warning*
+  (`strict decoding error: unknown field "nodeRegistration.patches"`) que se pierde entre la
+  salida del `init`, sigue adelante y crea el cluster **sin aplicar el patch**. El resultado
+  habría sido un control plane con las reservas de worker, sin ningún error visible. Se detectó
+  porque el `--dry-run` previo mostraba 200Mi donde debían verse 300Mi.
+
+  > Lección general: en kubeadm, un campo mal colocado no es un error, es un warning. El
+  > `--dry-run` **con verificación del resultado** — no sólo mirar que termine bien — es lo que lo
+  > destapa.
+- **`--config` y `--patches` son mutuamente excluyentes**: `can not mix '--config' with arguments
+  [patches]`. Con archivo de configuración, la única vía es el campo `patches.directory`.
+- **CoreDNS atascado en `ContainerCreating` con `failed to find plugin "loopback" in path
+  [/usr/lib/cni]`.** El containerd de Debian trae `bin_dir = "/usr/lib/cni"` (la ruta de Debian),
+  mientras que Cilium — como todo el ecosistema Kubernetes — instala sus binarios en
+  `/opt/cni/bin`. El directorio de Debian estaba **vacío**, así que no fallaba sólo el plugin de
+  Cilium: faltaba hasta `loopback`. Corregido apuntando `bin_dir` a `/opt/cni/bin` en los tres
+  nodos y reiniciando containerd. Es un fallo específico de instalar containerd desde los repos de
+  Debian en vez de los de Docker; con el paquete de Docker no aparece.
+- **La `sandbox_image` de containerd no coincidía con la que espera kubeadm**: `pause:3.8` frente a
+  `pause:3.10.1`. No rompe el arranque, y por eso es traicionero: el kubelet sólo protege del
+  garbage collector la imagen `pause` que él conoce, así que puede borrar la que containerd está
+  usando y tumbar pods sin causa aparente. Alineado con `kubeadm config images list` antes del
+  `init`.
+- **El primer `kubeadm init --dry-run` falló con `kind and apiVersion is mandatory`** por un `---`
+  de más al principio del archivo de configuración: las líneas de comentario iniciales más ese
+  separador forman un primer documento YAML vacío, que kubeadm intenta parsear.
+- **`swap` ya no existe en la imagen**: `swapon --show` vacío y `/etc/fstab` sin entrada. El paso
+  `swapoff -a` del roadmap es un no-op aquí. Se ejecuta igualmente porque es obligatorio en el CKA
+  y porque una imagen futura sí podría traerla.
+- **`sysctl`, `swapon` y compañía viven en `/usr/sbin`, fuera del `PATH` del usuario `debian`.**
+  Al verificar por SSH sin `sudo` sale `command not found`, que parece que el parámetro no se
+  aplicó cuando sí lo estaba. Usar la ruta completa o `sudo`.
 
 ---
 
@@ -538,7 +613,7 @@ nadie intervenga.
 | 1 — Proxmox VE | ~2026-08 _(confirmar)_ | — | ext4/LVM-thin, repos deb822, token `tofu@pve` creado. Rol ampliado el 2026-08-25 |
 | 2 — Plantilla cloud-init | 2026-08-24 | ~1 h | Plantilla 9000 sobre `local-lvm`; clon de prueba listo en 16 s |
 | 3 — OpenTofu | 2026-08-25 → 2026-08-28 | — | 3 VMs desde código; ciclo `destroy`+`apply` en 48 s; state cifrado verificado |
-| 4 — kubeadm | — | — | |
+| 4 — kubeadm | 2026-08-28 | ~2 h | v1.35.8 + Cilium 1.20.1; 3 nodos `Ready`, snapshot `cluster-limpio`. Falta 4.10 (Ansible) |
 | 5 — ArgoCD | — | — | |
 | 6 — Plataforma | — | — | |
 | 7 — Cloudflare Tunnel | — | — | |
@@ -588,3 +663,6 @@ El segundo, descubierto al preparar la Fase 3 y con efecto directo sobre la Fase
 | 2026-08-25 | `install-opentofu.sh` → `The release is signed with the incorrect key: ` | Bug del instalador con GPG 2.4+ y `keyboxd`; la firma es válida | Instalación manual verificando firma y SHA256 aparte |
 | 2026-08-28 | `tofu apply` → `dial tcp 192.168.1.20:8006: connect: no route to host`, con `ping` OK | Corte transitorio de red en la máquina de trabajo (túnel VPN activo). El `plan` no lo detecta: con state vacío no consulta la API | Reintentar. Comprobar antes con `curl -sk https://192.168.1.20:8006/`, no con `ping` |
 | 2026-08-28 | `Host key verification failed` en `.51`-`.53` tras `destroy`+`apply` | VMs nuevas = host keys nuevas para IPs ya conocidas | `ssh-keygen -R <ip>`. En la Fase 4, Ansible necesitará `host_key_checking = False` |
+| 2026-08-28 | El patch de `KubeletConfiguration` se ignoraba sin error | `nodeRegistration.patches` es de `v1beta3`; en `v1beta4` va a nivel raíz. kubeadm sólo emite un warning | Mover `patches:` a la raíz de `InitConfiguration` y comprobar el `--dry-run` |
+| 2026-08-28 | CoreDNS en `ContainerCreating`: `failed to find plugin "loopback" in path [/usr/lib/cni]` | containerd de Debian usa `bin_dir=/usr/lib/cni` (vacío); Cilium instala en `/opt/cni/bin` | `bin_dir = "/opt/cni/bin"` en `/etc/containerd/config.toml` + `systemctl restart containerd` |
+| 2026-08-28 | `sandbox_image` de containerd = `pause:3.8`, kubeadm espera `pause:3.10.1` | Valor por defecto del containerd de Debian, más antiguo que el que pide k8s 1.35 | Alinear con `kubeadm config images list \| grep pause` antes del `init` |
