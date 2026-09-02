@@ -1,0 +1,105 @@
+---
+# kubeadm init sobre k8s-cp-1 (pasos 4.4b y 4.5).
+
+- name: Directorio de patches del kubelet
+  ansible.builtin.file:
+    path: /etc/kubernetes/patches
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Copiar el patch de reservas del control plane
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../files/kubelet-patches/kubeletconfiguration+merge.yaml"
+    dest: /etc/kubernetes/patches/kubeletconfiguration+merge.yaml
+    owner: root
+    group: root
+    mode: "0644"
+  # Las reservas del control plane son específicas de este nodo, así que no pueden
+  # ir en el KubeletConfiguration del ConfigMap (que es común al cluster). Y no se
+  # editan en /var/lib/kubelet/config.yaml porque kubeadm regenera ese archivo en
+  # cada upgrade y la edición se pierde en silencio.
+
+- name: Copiar la configuración de kubeadm
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../files/kubeadm-config.yaml"
+    dest: /etc/kubernetes/kubeadm-config.yaml
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Inicializar el control plane
+  ansible.builtin.command:
+    cmd: kubeadm init --config /etc/kubernetes/kubeadm-config.yaml
+  args:
+    creates: /etc/kubernetes/admin.conf
+  register: kubeadm_init
+  # --config y --patches son mutuamente excluyentes ("can not mix '--config' with
+  # arguments [patches]"). Con archivo de configuración, la única vía es el campo
+  # patches.directory del InitConfiguration, a nivel RAÍZ — bajo nodeRegistration
+  # es de v1beta3 y kubeadm lo degrada a warning, crea el cluster igual y no
+  # aplica el patch. El assert de abajo es la red que caza precisamente eso.
+
+- name: Leer las reservas efectivas del kubelet
+  ansible.builtin.slurp:
+    src: /var/lib/kubelet/config.yaml
+  register: kubelet_config_raw
+
+- name: El patch del control plane se aplicó de verdad
+  ansible.builtin.assert:
+    that:
+      - (kubelet_config_raw.content | b64decode | from_yaml).systemReserved.memory == "300Mi"
+      - (kubelet_config_raw.content | b64decode | from_yaml).kubeReserved.memory == "400Mi"
+    fail_msg: >-
+      El kubelet del control plane tiene reservas de worker: el patch de
+      /etc/kubernetes/patches no se aplicó. Revisar que `patches:` esté a nivel
+      raíz de InitConfiguration (v1beta4), no dentro de nodeRegistration.
+  # Verificar el resultado, no el código de salida. Sin este assert, un cluster
+  # con el control plane desprotegido pasaría por sano.
+
+- name: Recoger el kubeconfig de administración
+  ansible.builtin.slurp:
+    src: /etc/kubernetes/admin.conf
+  register: admin_conf
+
+- name: Escribir el kubeconfig en la máquina de trabajo
+  ansible.builtin.copy:
+    content: "{{ admin_conf.content | b64decode }}"
+    dest: "{{ local_kubeconfig | expanduser }}"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  # Aparte de ~/.kube/config para no pisar otros contextos:
+  #   export KUBECONFIG={{ local_kubeconfig }}
+
+- name: Directorio .kube del usuario del nodo
+  ansible.builtin.file:
+    path: /home/{{ ansible_user }}/.kube
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0700"
+
+- name: kubeconfig para el usuario del nodo
+  ansible.builtin.copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /home/{{ ansible_user }}/.kube/config
+    remote_src: true
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0600"
+
+- name: Generar el comando de unión para los workers
+  ansible.builtin.command: kubeadm token create --print-join-command
+  register: join_command
+  changed_when: false
+  no_log: true
+  # Los tokens de kubeadm caducan a las 24 h, así que se genera uno nuevo en cada
+  # ejecución en vez de guardarlo. no_log porque lleva el token y el hash del CA.
+
+- name: Publicar el comando de unión para el play de workers
+  ansible.builtin.set_fact:
+    kubeadm_join_command: "{{ join_command.stdout }}"
+    cacheable: false
+  no_log: true

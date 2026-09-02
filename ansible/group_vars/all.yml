@@ -1,0 +1,31 @@
+# Versiones del cluster. Cambiar aquí y en ningún otro sitio.
+#
+# k8s_pkg_version fija el paquete exacto (no sólo la minor) porque los tres nodos
+# tienen que estar en la misma versión: un worker en 1.35.9 y un control plane en
+# 1.35.8 arranca igual y falla más tarde. El `hold` posterior impide que un
+# `apt upgrade` los mueva por su cuenta.
+k8s_minor: "1.35"
+k8s_pkg_version: "1.35.8-1.1"
+
+# Debe coincidir con `kubeadm config images list`. El rol de containerd lo verifica
+# con un assert: si kubeadm espera otra pause, el playbook para. Ver BITACORA,
+# incidencia de `pause:3.8` — no rompe nada visible y tumba pods semanas después.
+containerd_sandbox_image: "registry.k8s.io/pause:3.10.1"
+
+# Los binarios CNI del ecosistema Kubernetes van a /opt/cni/bin; el containerd de
+# Debian busca en /usr/lib/cni, que está vacío. Con el default de Debian, CoreDNS
+# se queda en ContainerCreating: `failed to find plugin "loopback"`.
+cni_bin_dir: "/opt/cni/bin"
+
+cilium_version: "1.20.1"
+
+# Alineado con networking.podSubnet de files/kubeadm-config.yaml y con el
+# clusterPoolIPv4PodCIDRList de gitops/infrastructure/cilium/values.yaml.
+pod_subnet: "10.244.0.0/16"
+
+# Endpoint del control plane, tal y como lo declara infra/main.tf.
+control_plane_endpoint: "192.168.1.51:6443"
+
+# Kubeconfig en la máquina de trabajo. Aparte de ~/.kube/config para no pisar
+# otros contextos.
+local_kubeconfig: "~/.kube/config-homelab"

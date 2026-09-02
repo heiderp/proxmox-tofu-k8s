@@ -1,0 +1,41 @@
+---
+# CNI (paso 4.7). Corre en la máquina de trabajo, no en el nodo: Helm no está
+# instalado en las VMs (y no tiene por qué estarlo, con 2 GB por worker), y el
+# values.yaml versionado del repo es la única fuente de la configuración — el
+# mismo que la Fase 5 adopta como Application de ArgoCD sin reescribirlo.
+
+- name: Añadir el repositorio de Helm de Cilium
+  ansible.builtin.command: helm repo add cilium https://helm.cilium.io/ --force-update
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  environment:
+    KUBECONFIG: "{{ local_kubeconfig | expanduser }}"
+
+- name: Instalar Cilium {{ cilium_version }}
+  ansible.builtin.command:
+    cmd: >-
+      helm upgrade --install cilium cilium/cilium
+      --version {{ cilium_version }}
+      --namespace kube-system
+      --values {{ playbook_dir }}/../../gitops/infrastructure/cilium/values.yaml
+      --wait --timeout 10m
+  delegate_to: localhost
+  become: false
+  environment:
+    KUBECONFIG: "{{ local_kubeconfig | expanduser }}"
+  register: cilium_install
+  changed_when: "'STATUS: deployed' in cilium_install.stdout"
+  # --version fijada: un chart que se mueva solo cambiaría el CNI en la próxima
+  # reconstrucción sin que nada lo declare.
+
+- name: Esperar a que todos los nodos estén Ready
+  ansible.builtin.command:
+    cmd: kubectl wait --for=condition=Ready nodes --all --timeout=180s
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  environment:
+    KUBECONFIG: "{{ local_kubeconfig | expanduser }}"
+  # Hasta que hay CNI, los nodos están NotReady con
+  # "container runtime network not ready". Es esperado, no un fallo.

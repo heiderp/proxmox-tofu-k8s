@@ -1,0 +1,63 @@
+---
+# Runtime (pasos 4.3, 4.3b y 4.3c). Los tres ajustes de aquí son los que hacen la
+# diferencia entre un cluster sano y uno que falla en silencio semanas después.
+
+- name: Instalar containerd
+  ansible.builtin.apt:
+    name: containerd
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Generar la configuración por defecto de containerd
+  ansible.builtin.command: containerd config default
+  register: containerd_default
+  changed_when: false
+
+- name: Escribir /etc/containerd/config.toml con los tres ajustes
+  ansible.builtin.copy:
+    dest: /etc/containerd/config.toml
+    content: >-
+      {{ containerd_default.stdout
+         | regex_replace('SystemdCgroup = false', 'SystemdCgroup = true')
+         | regex_replace('sandbox_image = "[^"]*"', 'sandbox_image = "' ~ containerd_sandbox_image ~ '"')
+         | regex_replace('bin_dir = "[^"]*"', 'bin_dir = "' ~ cni_bin_dir ~ '"') }}
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reiniciar containerd
+  # Se parte del default generado en vez de versionar un config.toml entero: el
+  # formato cambia entre versiones de containerd, y un archivo fijo se queda
+  # obsoleto sin avisar. Aquí sólo se declaran las tres desviaciones:
+  #   1. SystemdCgroup = true  — con false el cluster arranca y parece sano, pero
+  #      los nodos se vuelven inestables bajo carga. Clásico de examen.
+  #   2. sandbox_image         — ver el assert de abajo.
+  #   3. bin_dir               — Debian apunta a /usr/lib/cni, que está vacío.
+
+- name: containerd activo y arrancando al boot
+  ansible.builtin.service:
+    name: containerd
+    state: started
+    enabled: true
+
+- name: Aplicar el reinicio pendiente antes de verificar
+  ansible.builtin.meta: flush_handlers
+
+- name: Preguntar a kubeadm qué imagen pause espera
+  ansible.builtin.command: kubeadm config images list --kubernetes-version v{{ k8s_pkg_version | regex_replace('-.*$', '') }}
+  register: kubeadm_images
+  changed_when: false
+  failed_when: false
+
+- name: La sandbox_image de containerd coincide con la que espera kubeadm
+  ansible.builtin.assert:
+    that:
+      - containerd_sandbox_image in kubeadm_images.stdout_lines
+    fail_msg: >-
+      containerd usa {{ containerd_sandbox_image }} pero kubeadm espera
+      {{ kubeadm_images.stdout_lines | select('search', 'pause') | list | join(', ') }}.
+      Ajustar containerd_sandbox_image en group_vars/all.yml.
+  when: kubeadm_images.rc == 0
+  # Este assert existe porque el desajuste no rompe nada visible: el kubelet sólo
+  # protege del garbage collector la pause que él conoce, así que puede borrar la
+  # que containerd está usando y tumbar pods sin causa aparente ni patrón.

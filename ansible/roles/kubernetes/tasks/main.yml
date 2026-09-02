@@ -1,0 +1,85 @@
+---
+# Repositorio pkgs.k8s.io y paquetes del cluster (paso 4.4).
+
+- name: Dependencias del repositorio
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gpg
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Directorio de llaves de apt
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Descargar la llave del repositorio
+  ansible.builtin.get_url:
+    url: "https://pkgs.k8s.io/core:/stable:/v{{ k8s_minor }}/deb/Release.key"
+    dest: /tmp/kubernetes-release.key
+    mode: "0644"
+  register: k8s_key
+
+- name: Convertir la llave a formato keyring
+  ansible.builtin.command:
+    cmd: gpg --batch --yes --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg /tmp/kubernetes-release.key
+  args:
+    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  # La llave del repo es por minor: al subir de 1.35 a 1.36 hay que borrar el
+  # keyring para que se regenere.
+
+- name: Declarar el repositorio
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/kubernetes.list
+    content: >-
+      deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg]
+      https://pkgs.k8s.io/core:/stable:/v{{ k8s_minor }}/deb/ /
+
+    owner: root
+    group: root
+    mode: "0644"
+  register: k8s_repo
+
+- name: Refrescar la caché de apt si el repositorio cambió
+  ansible.builtin.apt:
+    update_cache: true
+  when: k8s_repo.changed
+
+- name: Quitar el hold antes de instalar
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: install
+  loop: [kubelet, kubeadm, kubectl]
+  # Sin esto, una reejecución con otra k8s_pkg_version fallaría en silencio:
+  # apt respeta el hold y deja la versión anterior.
+
+- name: Instalar kubelet, kubeadm y kubectl en la versión fijada
+  ansible.builtin.apt:
+    name:
+      - "kubelet={{ k8s_pkg_version }}"
+      - "kubeadm={{ k8s_pkg_version }}"
+      - "kubectl={{ k8s_pkg_version }}"
+    state: present
+    allow_downgrade: true
+
+- name: Fijar los paquetes con hold
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop: [kubelet, kubeadm, kubectl]
+  # Un `apt upgrade` que mueva el kubelet por su cuenta rompe el cluster sin
+  # avisar. Las subidas de versión se hacen con `kubeadm upgrade`, no con apt.
+
+- name: kubelet habilitado al boot
+  ansible.builtin.service:
+    name: kubelet
+    enabled: true
+  # No se arranca aquí: sin cluster, el kubelet entra en crashloop hasta que
+  # kubeadm init/join escribe su configuración. Es normal.

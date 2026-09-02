@@ -1,0 +1,22 @@
+---
+# Unión de los workers y etiquetado (paso 4.8).
+
+- name: Unir el nodo al cluster
+  ansible.builtin.command:
+    cmd: "{{ hostvars[groups['control_plane'][0]]['kubeadm_join_command'] }}"
+  args:
+    creates: /etc/kubernetes/kubelet.conf
+  no_log: true
+  # no_log: el comando lleva el token de bootstrap y el hash del CA. Si falla,
+  # depurar con `journalctl -u kubelet` en el nodo.
+
+- name: Etiquetar el nodo como worker
+  ansible.builtin.command:
+    cmd: >-
+      kubectl --kubeconfig /etc/kubernetes/admin.conf label node {{ inventory_hostname }}
+      node-role.kubernetes.io/worker= --overwrite
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  changed_when: "'not labeled' not in label_result.stdout"
+  register: label_result
+  # kubeadm no pone rol a los workers: la columna ROLES sale <none> hasta que
+  # alguien la etiqueta. Es cosmético, pero el CKA asume que se sabe hacer.

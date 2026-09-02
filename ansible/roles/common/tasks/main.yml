@@ -1,0 +1,64 @@
+---
+# Prerequisitos de nodo (paso 4.2). Todo lo de aquí es obligatorio antes de que
+# kubeadm toque nada.
+
+- name: Desactivar swap en caliente
+  ansible.builtin.command: swapoff -a
+  when: ansible_swaptotal_mb | int > 0
+  changed_when: true
+  # No-op en la imagen genericcloud de Debian 13, que no trae swap. Se ejecuta
+  # igual: el kubelet se niega a arrancar con swap activo y una imagen futura
+  # sí podría traerla.
+
+- name: Comentar las entradas swap de /etc/fstab
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^([^#].*\s+swap\s+.*)$'
+    replace: '# \1'
+
+- name: Declarar los módulos de kernel que necesita el cluster
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/k8s.conf
+    content: |
+      overlay
+      br_netfilter
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Cargar los módulos sin esperar a un reboot
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - overlay
+    - br_netfilter
+
+- name: Parámetros sysctl del plano de red
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/k8s.conf
+    sysctl_set: true
+    reload: true
+  loop:
+    - { name: net.bridge.bridge-nf-call-iptables, value: "1" }
+    - { name: net.bridge.bridge-nf-call-ip6tables, value: "1" }
+    - { name: net.ipv4.ip_forward, value: "1" }
+  # Sin esto el tráfico entre pods de nodos distintos no atraviesa el bridge y
+  # el síntoma parece un fallo del CNI.
+
+- name: Instalar chrony
+  ansible.builtin.apt:
+    name: chrony
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: chrony activo y arrancando al boot
+  ansible.builtin.service:
+    name: chrony
+    state: started
+    enabled: true
+  # etcd es intolerante con la deriva de reloj: sin NTP aparecen timeouts de
+  # elección de líder que parecen problemas de red.
