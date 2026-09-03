@@ -1,0 +1,84 @@
+# ArgoCD ajustado al presupuesto de 2 GB por worker.
+#
+# Sin límites, los cinco componentes rondan los 800 MB entre todos: casi un
+# worker entero. Con estos valores bajan a ~530 MiB de requests y ~1 GiB de
+# límites duros, repartidos entre k8s-wk-1 y k8s-wk-2 (el control plane tiene el
+# taint NoSchedule, así que no le toca nada).
+#
+# Por qué este archivo existe desde la instalación y no después: el roadmap
+# instala con `install.yaml` de `stable` y ajusta los límites con `kubectl set
+# resources`, para migrarlos a Git en un paso posterior. Aquí se hace en el orden
+# inverso por la misma razón que con Cilium en la Fase 4 — la configuración no
+# vive en comandos sueltos, y `stable` no está fijado a ninguna versión: la
+# próxima reconstrucción traería otra distinta sin que nada lo declare.
+#
+# Instalación (la única vez que se hace a mano, Fase 5.1):
+#   helm upgrade --install argocd argo/argo-cd --version 10.7.0 \
+#     --namespace argocd --create-namespace \
+#     --values gitops/infrastructure/argocd/values.yaml --wait
+#
+# A partir del root-app (5.5), ArgoCD se gestiona a sí mismo desde este archivo.
+
+# Sólo requests de CPU, nunca limits: un limit de CPU no mata el pod, lo
+# estrangula. El síntoma —sincronizaciones lentísimas sin ningún error— no apunta
+# a la causa, y se depura fatal.
+
+configs:
+  params:
+    # TLS propio de argocd-server. Pasar a true en la Fase 6, cuando el Gateway
+    # termine el TLS por delante y este doble cifrado sobre.
+    server.insecure: false
+
+# Reconcilia el estado del cluster contra Git. Es el corazón de ArgoCD y un
+# StatefulSet, no un Deployment.
+controller:
+  resources:
+    limits:
+      memory: 384Mi
+    requests:
+      memory: 192Mi
+      cpu: 100m
+
+# El que más consume: clona los repos y renderiza los charts de Helm. Si empieza
+# a morir con OOMKilled al sincronizar charts grandes, súbele el límite a 512Mi
+# antes de tocar cualquier otra cosa.
+repoServer:
+  resources:
+    limits:
+      memory: 384Mi
+    requests:
+      memory: 192Mi
+      cpu: 100m
+
+# API y UI.
+server:
+  resources:
+    limits:
+      memory: 192Mi
+    requests:
+      memory: 96Mi
+      cpu: 50m
+
+# Caché de manifiestos renderizados. No es opcional: sin Redis, el repo-server
+# vuelve a renderizar en cada reconciliación y el consumo sube en vez de bajar.
+redis:
+  resources:
+    limits:
+      memory: 128Mi
+    requests:
+      memory: 64Mi
+      cpu: 50m
+
+# Proveedor de SSO. Aquí se entra con el usuario admin local, así que son ~60 MB
+# sin ninguna función. Reactivar el día que haya OIDC de verdad.
+dex:
+  enabled: false
+
+# ApplicationSet genera Applications a partir de plantillas. No se usa todavía y
+# en este chart no tiene flag `enabled`: se apaga poniendo replicas a 0.
+applicationSet:
+  replicas: 0
+
+# Notificaciones a Slack/email. Sin uso hoy.
+notifications:
+  enabled: false
