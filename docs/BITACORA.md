@@ -292,7 +292,7 @@ código**.
 
 ---
 
-## Fase 4 — Cluster Kubernetes con kubeadm ✅ _(pasos 4.1-4.9; falta 4.10, Ansible)_
+## Fase 4 — Cluster Kubernetes con kubeadm ✅
 
 **Qué construye:** el cluster en sí: un control plane, dos workers, red de pods funcionando.
 
@@ -405,6 +405,80 @@ reportar, y luego todo queda `Running` sin intervención.
 - **`sysctl`, `swapon` y compañía viven en `/usr/sbin`, fuera del `PATH` del usuario `debian`.**
   Al verificar por SSH sin `sudo` sale `command not found`, que parece que el parámetro no se
   aplicó cuando sí lo estaba. Usar la ruta completa o `sudo`.
+
+### 4.10 — De los comandos a los roles (2026-09-02)
+
+**Qué construye:** `ansible/playbooks/cluster.yml` y seis roles (`common`, `kubernetes`,
+`containerd`, `control_plane`, `cilium`, `worker`) que reconstruyen el cluster entero sobre las
+VMs recién creadas por OpenTofu.
+
+**Decisiones tomadas:**
+
+- **`kubernetes` va antes que `containerd` en el orden de roles.** Parece al revés — el runtime
+  primero — pero el assert de la `sandbox_image` le pregunta a `kubeadm config images list` qué
+  imagen `pause` espera, y para eso kubeadm tiene que estar instalado. El orden lo impone la
+  verificación, no la dependencia funcional (containerd sólo hace falta antes del `init`).
+- **containerd se configura partiendo de `containerd config default`, no de un `config.toml`
+  versionado.** El formato del archivo cambia entre versiones y uno fijo se queda obsoleto sin
+  avisar. El rol declara sólo las tres desviaciones (`SystemdCgroup`, `sandbox_image`, `bin_dir`)
+  sobre el default que genera el propio binario instalado.
+- **Cilium se instala desde la máquina de trabajo (`delegate_to: localhost`), no desde el nodo.**
+  Helm no está en las VMs y no tiene por qué estarlo con 2 GB por worker; además así el
+  `values.yaml` del repo sigue siendo la única fuente de la configuración, el mismo que la Fase 5
+  adopta como Application de ArgoCD.
+- **Dos `assert` que codifican los fallos silenciosos de la sesión anterior.** No son adorno: son
+  la traducción a código de las dos cosas que estuvieron a punto de pasar desapercibidas. Uno
+  compara la `sandbox_image` con lo que espera kubeadm; el otro lee
+  `/var/lib/kubelet/config.yaml` tras el `init` y comprueba que las reservas son las del control
+  plane (300Mi/400Mi) y no las de worker — o sea, que el patch se aplicó de verdad. Si el campo
+  `patches:` vuelve a colocarse mal, el playbook **para** en vez de crear un cluster desprotegido.
+- **Los tokens de unión se generan en cada ejecución**, no se guardan: caducan a las 24 h. Las
+  tareas que los manejan van con `no_log`.
+- **El playbook no es un `qm rollback` con otro nombre.** La prueba se hizo desde `tofu destroy`,
+  no desde el snapshot: un rollback devuelve VMs que ya tuvieron cluster, y eso no prueba que el
+  código sepa construirlo desde una VM virgen.
+
+**Resultado real (2026-09-02):** de VM inexistente a tres nodos `Ready` en **4 min 41 s** —
+53 s de `tofu destroy` + `apply` y **3 min 48 s** de una sola pasada del playbook, sin
+intervención manual. La segunda pasada da `changed=0` en los dos workers; el único `changed` que
+queda en el control plane es `helm upgrade`, que crea una revisión nueva aunque no cambie nada
+(sin el plugin `helm-diff` no hay forma de distinguirlo, y se prefiere que converja siempre a
+saltarlo comparando la versión del chart, que dejaría fuera cualquier edición del `values.yaml`).
+
+Las reservas salieron idénticas a las de la instalación manual: control plane 4016548Ki capacity
+/ 2992548Ki allocatable, workers 2021540Ki / 1560740Ki. Verificado además con tráfico real sobre
+el cluster reconstruido, no sólo con `kubectl get nodes`: ping pod↔pod entre `k8s-wk-1` y
+`k8s-wk-2` (0 % de pérdida), `kubernetes.default` y DNS externo resolviendo, y una `NetworkPolicy`
+`deny-all` cortando el tráfico y devolviéndolo al borrarla.
+
+Snapshot `cluster-limpio` recreado en 101/102/103 con las VMs apagadas — el `destroy` se llevó el
+anterior, que es el precio de probar en serio. Thin pool al **19,94 %** de 66,87 GB tras
+rehacerlo, igual que antes. Al arrancar, los pods pasan por `Unknown` un par de minutos y vuelven
+solos a `Running`.
+
+**Incidencias:**
+
+- **`stdout_callback = yaml` ya no existe.** Era el callback de `community.general`, eliminado en
+  su versión 12.0.0 (aquí hay la 13.3.0); el `ansible.cfg` escrito en 4.1 lo daba por bueno. La
+  salida YAML es hoy una opción del callback nativo: `stdout_callback = default` con
+  `result_format = yaml`. Falla al arrancar el playbook, así que es barato — pero conviene saber
+  que la configuración de 4.1 caducó sin que nadie la tocara.
+- **`dpkg_selections` aborta sobre un paquete que aún no está instalado**
+  (`Failed to find package 'kubeadm' to perform selection 'install'`). El rol quita el `hold`
+  antes de instalar para poder cambiar de versión, pero sobre una VM virgen no hay nada que
+  desmarcar. Resuelto con `package_facts` y un `when` doble: sólo si el paquete existe **y** su
+  versión no es la declarada — la segunda condición es además lo que hace la reejecución
+  idempotente, porque si no el par quitar-hold/poner-hold reporta `changed` en cada pasada.
+- **Un `jsonpath` dentro de un escalar plegado (`>-`) de YAML se rompe.** El plegado convierte los
+  saltos en espacios y Ansible parte el comando por espacios, así que `kubectl` recibió medio
+  jsonpath como nombre de nodo: `Error from server (NotFound): nodes ".items[*]}..." not found`.
+  Se sustituyó por `-o json` y `from_json` en Jinja, que no depende del quoting del shell.
+- **La verificación final medía un estado transitorio.** Los asserts corrían inmediatamente
+  después del `join` y veían los workers en `NotReady` con dos segundos de vida: el agente de
+  Cilium todavía no había arrancado en ellos. Se añadió un `kubectl wait --for=condition=Ready
+  nodes --all` al principio del play de verificación. Es el mismo error de método que la lección
+  de la fase anterior, por el otro lado: no basta con verificar el resultado, hay que verificarlo
+  **cuando ya es el resultado**.
 
 ---
 

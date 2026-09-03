@@ -39,6 +39,15 @@
   hosts: control_plane
   gather_facts: false
   tasks:
+    - name: Esperar a que los workers terminen de arrancar
+      ansible.builtin.command:
+        cmd: kubectl --kubeconfig /etc/kubernetes/admin.conf wait --for=condition=Ready nodes --all --timeout=300s
+      changed_when: false
+      # Un worker recién unido tarda unas decenas de segundos en pasar a Ready:
+      # hasta que el agente de Cilium arranca en él, el nodo sigue NotReady con
+      # "container runtime network not ready". Sin esta espera, la verificación
+      # de abajo mide un estado transitorio.
+
     - name: Estado de los nodos
       ansible.builtin.command:
         cmd: kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes -o wide
@@ -51,25 +60,31 @@
           - nodes_out.stdout_lines | select('search', ' Ready ') | list | length == 3
         fail_msg: "El cluster no tiene tres nodos Ready:\n{{ nodes_out.stdout }}"
 
-    - name: allocatable por debajo de capacity en los tres nodos
+    - name: Leer capacity y allocatable de los nodos
       ansible.builtin.command:
-        cmd: >-
-          kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes
-          -o jsonpath={range .items[*]}{.metadata.name}{" "}{.status.capacity.memory}{" "}{.status.allocatable.memory}{"\n"}{end}
-      register: mem_out
+        cmd: kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes -o json
+      register: nodes_json
       changed_when: false
 
     - name: Las reservas del kubelet están activas
       ansible.builtin.assert:
         that:
-          - item.split()[1] | regex_replace('Ki$', '') | int > item.split()[2] | regex_replace('Ki$', '') | int
-        fail_msg: "El nodo {{ item.split()[0] }} no tiene reservas: capacity == allocatable"
-      loop: "{{ mem_out.stdout_lines | select('search', '.') | list }}"
+          - item.status.capacity.memory | regex_replace('Ki$', '') | int >
+            item.status.allocatable.memory | regex_replace('Ki$', '') | int
+        fail_msg: >-
+          El nodo {{ item.metadata.name }} tiene capacity == allocatable: las
+          reservas del kubelet no se aplicaron.
+      loop: "{{ (nodes_json.stdout | from_json)['items'] }}"
       loop_control:
-        label: "{{ item.split()[0] }}"
+        label: "{{ item.metadata.name }}"
       # Si capacity y allocatable coinciden, las reservas no se aplicaron — y un
       # cluster de 2 GB por nodo sin reservas queda a merced del OOM killer.
 
     - name: Resumen
       ansible.builtin.debug:
-        msg: "{{ nodes_out.stdout_lines }}"
+        msg: >-
+          {{ item.metadata.name }}: {{ item.status.capacity.memory }} capacity,
+          {{ item.status.allocatable.memory }} allocatable
+      loop: "{{ (nodes_json.stdout | from_json)['items'] }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"

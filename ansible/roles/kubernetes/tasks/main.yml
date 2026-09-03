@@ -52,13 +52,24 @@
     update_cache: true
   when: k8s_repo.changed
 
+- name: Inventariar los paquetes instalados
+  ansible.builtin.package_facts:
+    manager: apt
+
 - name: Quitar el hold antes de instalar
   ansible.builtin.dpkg_selections:
     name: "{{ item }}"
     selection: install
   loop: [kubelet, kubeadm, kubectl]
+  when:
+    - item in ansible_facts.packages
+    - ansible_facts.packages[item][0].version != k8s_pkg_version
   # Sin esto, una reejecución con otra k8s_pkg_version fallaría en silencio:
-  # apt respeta el hold y deja la versión anterior.
+  # apt respeta el hold y deja la versión anterior. Las dos condiciones:
+  #   1. sobre una VM recién creada los paquetes no existen y dpkg_selections
+  #      aborta con "Failed to find package";
+  #   2. quitar el hold sólo cuando la versión instalada no es la declarada, para
+  #      que una reejecución sin cambios no reporte `changed` en cada nodo.
 
 - name: Instalar kubelet, kubeadm y kubectl en la versión fijada
   ansible.builtin.apt:

@@ -28,6 +28,13 @@
   changed_when: "'STATUS: deployed' in cilium_install.stdout"
   # --version fijada: un chart que se mueva solo cambiaría el CNI en la próxima
   # reconstrucción sin que nada lo declare.
+  #
+  # Esta task reporta `changed` en cada ejecución, y es a propósito: `helm
+  # upgrade` crea una revisión nueva aunque nada cambie, así que no hay forma de
+  # distinguir "convergió" de "no hacía falta" sin el plugin helm-diff. Se
+  # prefiere ejecutarlo siempre (el values.yaml versionado es la fuente de la
+  # verdad y así converge de verdad) antes que saltarlo comparando la versión del
+  # chart, que dejaría fuera cualquier edición del values.yaml.
 
 - name: Esperar a que todos los nodos estén Ready
   ansible.builtin.command:
