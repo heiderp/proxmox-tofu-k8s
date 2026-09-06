@@ -1,0 +1,52 @@
+# ArgoCD gestionándose a sí mismo.
+#
+# Desde aquí, `values.yaml` deja de ser documentación de cómo se instaló y pasa a ser
+# la fuente de verdad: cambiarlo y hacer push modifica el ArgoCD que corre.
+#
+# Adopta el release de Helm que instaló el paso 5.1. Argo no usa Helm para desplegar
+# —renderiza el chart y aplica el resultado—, así que toma posesión de los objetos que
+# ya existen por nombre. El Secret del release (`sh.helm.release.v1.argocd.v1`) se
+# queda huérfano en el namespace: inofensivo, pero a partir de ahora `helm list -n
+# argocd` miente. La verdad está en Git.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd
+  namespace: argocd
+spec:
+  project: default
+
+  # Multi-source: el chart viene del repo de Argo y los valores de este repo. La
+  # alternativa —vendorizar el chart— obligaría a copiar 10 000 líneas de plantillas
+  # para cambiar seis límites de memoria.
+  sources:
+    - repoURL: https://argoproj.github.io/argo-helm
+      chart: argo-cd
+      # Fijada. `stable` no es una versión: la próxima reconstrucción traería otra
+      # cosa sin que nada lo declare.
+      targetRevision: 10.7.0
+      helm:
+        # Explícito para que los nombres renderizados coincidan con los que ya
+        # existen (`argocd-server`, `argocd-repo-server`…) y Argo adopte en vez de
+        # crear un juego duplicado de objetos.
+        releaseName: argocd
+        valueFiles:
+          # `$values` resuelve a la raíz del repo de la source de abajo.
+          - $values/gitops/infrastructure/argocd/values.yaml
+
+    - repoURL: https://github.com/heiderp/proxmox-tofu-k8s.git
+      targetRevision: main
+      # Sin `path`: esta source no genera recursos, solo aporta archivos de valores.
+      ref: values
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+
+  # syncPolicy.automated ausente A PROPÓSITO en la primera pasada.
+  #
+  # Adoptar un release ya instalado hace que Argo reescriba metadatos de propiedad y
+  # pueda reiniciar sus propios pods a mitad de la sincronización. Esta app nace en
+  # `OutOfSync`, se mira el diff en la UI, se sincroniza a mano y solo entonces se
+  # activa `automated`. Regla nº 3 del repo: un cambio a la vez.

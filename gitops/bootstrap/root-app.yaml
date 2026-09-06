@@ -1,0 +1,58 @@
+# Application raíz — patrón app-of-apps.
+#
+# Este archivo es el ÚNICO `kubectl apply` que queda en el proyecto. Se aplica una
+# sola vez (paso 5.6) y a partir de ahí todo lo que aparezca en `gitops/` bajo el
+# patrón de abajo entra al cluster solo, con un commit.
+#
+#   kubectl apply -f gitops/bootstrap/root-app.yaml
+#
+# El root-app NO se gestiona a sí mismo a propósito: no encaja con su propio filtro
+# `include`. Cambiar este archivo exige volver a aplicarlo a mano, y así debe ser —
+# una Application que puede reescribir su propia definición es un lazo del que no se
+# sale si se rompe.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  finalizers:
+    # ⚠️ Con este finalizer, `kubectl delete app root` NO borra solo el root-app:
+    # borra en cascada todo lo que gestiona. Es lo correcto (sin él quedarían
+    # Applications huérfanas que nadie reconcilia), pero no es un borrado inocente.
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    # HTTPS y no SSH: el repo es público, así que Argo clona anónimo y no hace falta
+    # ninguna deploy key en el cluster.
+    repoURL: https://github.com/heiderp/proxmox-tofu-k8s.git
+    targetRevision: main
+    path: gitops
+    directory:
+      recurse: true
+      # El filtro es la pieza que hace que esto funcione, por dos razones:
+      #
+      # 1. Sin él, Argo intentaría parsear los `values.yaml` de cada chart como
+      #    manifiestos de Kubernetes y fallaría: no son objetos con apiVersion/kind.
+      # 2. Delimita qué se descubre. `*/*/application.yaml` cubre
+      #    `infrastructure/<x>/application.yaml` y `apps/<x>/application.yaml`, y deja
+      #    fuera este mismo archivo (`bootstrap/root-app.yaml` es `*/*.yaml`).
+      #
+      # El roadmap apuntaba solo a `gitops/infrastructure`, lo que nunca habría
+      # descubierto nada de `gitops/apps/`. Ver BITACORA, Fase 5.
+      include: '*/*/application.yaml'
+
+  destination:
+    server: https://kubernetes.default.svc
+    # Las Applications hijas viven aquí; cada una declara su propio destino.
+    namespace: argocd
+
+  syncPolicy:
+    automated:
+      # Sin `prune`, borrar un manifiesto de Git no borra nada del cluster y la
+      # deriva vuelve por la puerta de atrás.
+      prune: true
+      # Revierte cualquier cambio hecho a mano contra lo que dice Git.
+      selfHeal: true
