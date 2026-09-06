@@ -44,9 +44,13 @@ spec:
     server: https://kubernetes.default.svc
     namespace: argocd
 
-  # syncPolicy.automated ausente A PROPÓSITO en la primera pasada.
-  #
-  # Adoptar un release ya instalado hace que Argo reescriba metadatos de propiedad y
-  # pueda reiniciar sus propios pods a mitad de la sincronización. Esta app nace en
-  # `OutOfSync`, se mira el diff en la UI, se sincroniza a mano y solo entonces se
-  # activa `automated`. Regla nº 3 del repo: un cambio a la vez.
+  # La adopción se hizo a mano (2026-09-05) antes de activar esto, por si reescribir
+  # los metadatos de propiedad reiniciaba los pods de ArgoCD a mitad de la
+  # sincronización. No lo hizo: el diff contra el cluster vivo salió vacío —cero
+  # líneas suprimidas en los cuatro workloads— y el único objeto creado fue el Job
+  # `argocd-redis-secret-init`, un hook `pre-install` que ya había caducado por TTL.
+  # Los cuatro pods siguieron con su AGE original.
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
