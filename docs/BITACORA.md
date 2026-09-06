@@ -555,7 +555,7 @@ ya había caducado por TTL. Los cuatro pods conservaron su `AGE` original.
 `sh.helm.release.v1.argocd.v1` queda huérfano en el namespace. Inofensivo, y conviene saberlo
 antes de creerse su salida.
 
-**El loop, probado:** commit `546c65f` (activar `automated` en la app `argocd`) pusheado a GitHub y
+**El loop, probado:** commit `70a116e` (activar `automated` en la app `argocd`) pusheado a GitHub y
 recogido por Argo **solo**, sin un `kubectl apply`. Tardó entre 2 y 4 minutos, coherente con el
 `timeout.reconciliation` de 180 s por defecto.
 
