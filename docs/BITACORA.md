@@ -687,8 +687,8 @@ nadie intervenga.
 | 1 — Proxmox VE | ~2026-08 _(confirmar)_ | — | ext4/LVM-thin, repos deb822, token `tofu@pve` creado. Rol ampliado el 2026-08-25 |
 | 2 — Plantilla cloud-init | 2026-08-24 | ~1 h | Plantilla 9000 sobre `local-lvm`; clon de prueba listo en 16 s |
 | 3 — OpenTofu | 2026-08-25 → 2026-08-28 | — | 3 VMs desde código; ciclo `destroy`+`apply` en 48 s; state cifrado verificado |
-| 4 — kubeadm | 2026-08-28 | ~2 h | v1.35.8 + Cilium 1.20.1; 3 nodos `Ready`, snapshot `cluster-limpio`. Falta 4.10 (Ansible) |
-| 5 — ArgoCD | — | — | |
+| 4 — kubeadm | 2026-08-28 → 2026-09-02 | ~2 h + 4.10 | v1.35.8 + Cilium 1.20.1; 3 nodos `Ready`, snapshot `cluster-limpio`. Cerrada con los roles de Ansible: reconstrucción completa en 4 min 41 s (ver [4.10](#410--de-los-comandos-a-los-roles-2026-09-02)) |
+| 5 — ArgoCD | 2026-09-02 → _en curso_ | — | 5.1-5.3: ArgoCD 10.7.0 (v3.5.2) por Helm con `values.yaml` versionado, dex y notifications fuera. El paso 5.9 del roadmap se elimina: los límites nacen en Git |
 | 6 — Plataforma | — | — | |
 | 7 — Cloudflare Tunnel | — | — | |
 | 8 — Observabilidad | — | — | |

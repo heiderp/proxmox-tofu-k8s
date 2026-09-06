@@ -1,95 +1,124 @@
+🇬🇧 **English** · 🇪🇸 [Español](README.es.md)
+
 # proxmox-tofu-k8s
 
-Cluster de Kubernetes reproducible sobre Proxmox VE, gobernado por GitOps.
+A reproducible Kubernetes cluster on Proxmox VE, governed by GitOps.
 
-**Criterio de éxito:** poder destruir el cluster entero y reconstruirlo desde este repositorio
-en menos de 30 minutos, con las aplicaciones expuestas a internet vía Cloudflare Tunnel y sin
-un solo puerto abierto en el router.
+**Definition of done:** destroy the entire cluster and rebuild it from this repository in under
+30 minutes, with applications reachable from the internet through a Cloudflare Tunnel and not a
+single port open on the router.
 
-Objetivo secundario, igual de importante: usar el cluster como laboratorio de destrucción para
-preparar el **CKA**.
+Secondary goal, just as important: use the cluster as a demolition lab to prepare for the **CKA**.
 
 ---
 
-## Estado
+## Status
 
-| Fase | Qué construye | Estado |
+| Phase | What it builds | Status |
 |---|---|---|
-| 0 | Verificación de hardware | ✅ |
-| 1 | Proxmox VE instalado y endurecido | ✅ |
-| 2 | Plantilla cloud-init reutilizable | ✅ |
-| 3 | OpenTofu creando las VMs | 🔜 siguiente |
-| 4 | Cluster kubeadm funcionando | ⬜ |
-| 5 | ArgoCD y el loop de GitOps | ⬜ |
-| 6 | Plataforma: red, TLS, secretos | ⬜ |
-| 7 | Exposición pública con Cloudflare | ⬜ |
-| 8 | Observabilidad y backups | ⬜ |
-| 9 | Entrenamiento CKA | ⬜ |
-| 10 | (Opcional) Cluster API / Talos | ⬜ |
+| 0 | Hardware verification | ✅ |
+| 1 | Proxmox VE installed and hardened | ✅ |
+| 2 | Reusable cloud-init template | ✅ |
+| 3 | OpenTofu creating the VMs | ✅ |
+| 4 | Working kubeadm cluster | ✅ |
+| 5 | ArgoCD and the GitOps loop | 🔜 in progress |
+| 6 | Platform: networking, TLS, secrets | ⬜ |
+| 7 | Public exposure via Cloudflare | ⬜ |
+| 8 | Observability and backups | ⬜ |
+| 9 | CKA training | ⬜ |
+| 10 | (Optional) Cluster API / Talos | ⬜ |
 
-El detalle de **por qué** existe cada fase, qué se decidió en ella y qué falló por el camino está
-en [`docs/BITACORA.md`](docs/BITACORA.md). El procedimiento paso a paso, con comandos, está en
-[`docs/roadmap-homelab-k8s.md`](docs/roadmap-homelab-k8s.md).
+Today: 3 nodes `Ready` with Cilium, rebuildable from nothing in **4 min 41 s** — `tofu destroy` +
+`apply` (53 s) plus a single Ansible playbook run (3 min 48 s). ArgoCD is installed; the GitOps
+loop is not closed yet.
+
+The **why** behind each phase, what was decided and what broke along the way lives in
+[`docs/BITACORA.md`](docs/BITACORA.md) (Spanish). The step-by-step procedure, with commands, is in
+[`docs/roadmap-homelab-k8s.md`](docs/roadmap-homelab-k8s.md) (Spanish).
+
+---
+
+## What went wrong
+
+A homelab teaches more through what it breaks than through what it installs. Three from the full
+log:
+
+- **CoreDNS stuck in `ContainerCreating`:** `failed to find plugin "loopback" in path
+  [/usr/lib/cni]`. Debian's containerd looks for CNI binaries in `/usr/lib/cni`, which is empty;
+  Cilium installs them into `/opt/cni/bin`. Looks like a CNI failure, is a distro default.
+- **A kubelet patch silently ignored:** in kubeadm's `v1beta4` API, `patches:` belongs at the root
+  of `InitConfiguration`. Under `nodeRegistration` — where it lived in `v1beta3` — it is dropped
+  with nothing but a warning, and the memory reservations simply never apply.
+- **`fio` reporting 1220 MiB/s and `fsync` in nanoseconds:** the test was writing to `/tmp`, which
+  is `tmpfs` on Debian 13. Invalid measurement. Re-run against the real disk: `fdatasync` p99 =
+  1.34 ms.
+
+Full log, with root cause and fix for each:
+[incident table](docs/BITACORA.md#registro-de-incidencias-transversales).
 
 ---
 
 ## Stack
 
-| Capa | Herramienta | Nota |
-|---|---|---|
-| Hipervisor | Proxmox VE 9 (Debian trixie) | ext4 + LVM-thin, no ZFS |
-| Imagen base | Debian 13 genericcloud + cloud-init | plantilla VMID 9000 |
-| IaC | OpenTofu + provider `bpg/proxmox` | state cifrado con PBKDF2 |
-| Config del SO | Ansible | prerequisitos y bootstrap de kubeadm |
-| Kubernetes | kubeadm 1.34 | 1 control plane + 2 workers |
-| Runtime | containerd | cgroup driver `systemd` |
-| CNI | Cilium en modo slim | sin Hubble; con NetworkPolicy |
-| GitOps | ArgoCD (app-of-apps) | `selfHeal` + `prune` |
-| LoadBalancer | MetalLB (L2) | pool `192.168.1.200-220` |
-| Entrada HTTP | Gateway API + Envoy Gateway | no Ingress |
-| TLS | cert-manager (DNS-01 Cloudflare) | sin puertos abiertos |
-| Secretos | Sealed Secrets | cifrados dentro del repo |
-| Exposición | Cloudflare Tunnel + Access | zero trust delante de lo privado |
-| Métricas | VictoriaMetrics (`vm-k8s-stack`) | no Prometheus, por RAM |
-| Almacenamiento | `local-path-provisioner` | no Longhorn, por RAM |
-| Backups | Velero + snapshots de etcd | y backups de Proxmox |
-| Actualizaciones | Renovate | PR automático → merge → Argo despliega |
+| Layer | Tool | Version | Note |
+|---|---|---|---|
+| Hypervisor | Proxmox VE (Debian trixie) | 9 | ext4 + LVM-thin, no ZFS |
+| Base image | Debian genericcloud + cloud-init | 13 | template VMID 9000 |
+| IaC | OpenTofu + `bpg/proxmox` provider | 1.12.6 / 0.111.1 | state encrypted with PBKDF2 |
+| OS config | Ansible | 14.3.1 | prerequisites and kubeadm bootstrap |
+| Kubernetes | kubeadm | 1.35.8 | 1 control plane + 2 workers |
+| Runtime | containerd | 1.7.24 | `systemd` cgroup driver |
+| CNI | Cilium, slim mode | 1.20.1 | no Hubble; NetworkPolicy enabled |
+| GitOps | ArgoCD (app-of-apps) | chart 10.7.0 · v3.5.2 | `selfHeal` + `prune` |
+| LoadBalancer | MetalLB (L2) | — | pool `192.168.1.200-220` |
+| HTTP ingress | Gateway API + Envoy Gateway | — | not Ingress |
+| TLS | cert-manager (Cloudflare DNS-01) | — | no open ports |
+| Secrets | Sealed Secrets | — | encrypted inside the repo |
+| Exposure | Cloudflare Tunnel + Access | — | zero trust in front of private panels |
+| Metrics | VictoriaMetrics (`vm-k8s-stack`) | — | not Prometheus, for RAM reasons |
+| Storage | `local-path-provisioner` | — | not Longhorn, for RAM reasons |
+| Backups | Velero + etcd snapshots | — | plus Proxmox backups |
+| Updates | Renovate | — | automated PR → merge → Argo deploys |
+
+No version = not installed yet. Everything pinned lives in
+[`ansible/group_vars/all.yml`](ansible/group_vars/all.yml) and the `values.yaml` files under
+[`gitops/infrastructure/`](gitops/infrastructure/) — never in loose commands.
 
 ---
 
-## Topología
+## Topology
 
-| Nodo | Rol | vCPU | RAM | Disco | IP |
+| Node | Role | vCPU | RAM | Disk | IP |
 |---|---|---|---|---|---|
 | `k8s-cp-1` | control plane | 2 | 4096 MB | 25 GB | 192.168.1.51 |
 | `k8s-wk-1` | worker | 2 | 2048 MB | 20 GB | 192.168.1.52 |
 | `k8s-wk-2` | worker | 2 | 2048 MB | 20 GB | 192.168.1.53 |
 
-Rangos reservados fuera del DHCP: `.50-.59` para las VMs, `.200-.220` para MetalLB.
+Ranges reserved outside DHCP: `.50-.59` for the VMs, `.200-.220` for MetalLB.
 
-Host: 15,7 GB de RAM, 4 cores, SSD de 119 GB. Los 65 GB de disco salen de un thin pool de
-66,87 GB — casi 1:1 a propósito: un thin pool lleno corrompe las tres VMs a la vez, no una.
+Host: 15.7 GB RAM, 4 cores, 119 GB SSD. The 65 GB of disk come out of a 66.87 GB thin pool —
+nearly 1:1 on purpose: a full thin pool corrupts all three VMs at once, not just one.
 
 ---
 
-## La restricción que gobierna todo
+## The constraint that governs everything
 
-**8 GB asignados a VMs. ~1 GB útil por worker después de las reservas del kubelet.**
+**8 GB allocated to VMs. ~1 GB usable per worker after kubelet reservations.**
 
-Esa cifra no es un detalle: es la razón detrás de casi todas las decisiones técnicas de este
-repositorio. Consecuencia directa:
+That number is not a footnote: it is the reason behind almost every technical decision in this
+repository. Direct consequence:
 
-| Sí cabe | No cabe sin ampliar RAM |
+| Fits | Does not fit without more RAM |
 |---|---|
-| Cluster kubeadm completo con NetworkPolicies | `kube-prometheus-stack` |
-| ArgoCD con límites ajustados | Loki |
+| Full kubeadm cluster with NetworkPolicies | `kube-prometheus-stack` |
+| ArgoCD with tuned limits | Loki |
 | MetalLB, cert-manager, Gateway API | Longhorn / Rook-Ceph |
-| Cloudflare Tunnel + apps pequeñas | Segundo cluster simultáneo |
-| Todos los escenarios del CKA | Elasticsearch, Keycloak, GitLab |
+| Cloudflare Tunnel + small apps | A second concurrent cluster |
+| Every CKA scenario | Elasticsearch, Keycloak, GitLab |
 
-**Regla operativa nº 1:** cuando algo se comporte raro — `kubectl` con timeouts, nodos
-parpadeando entre `Ready`/`NotReady`, pods en `Terminating` — el síntoma parece de red pero
-casi siempre es memoria. Antes de tocar Cilium:
+**Operating rule #1:** when something behaves strangely — `kubectl` timing out, nodes flapping
+between `Ready`/`NotReady`, pods stuck in `Terminating` — the symptom looks like networking but
+it is almost always memory. Before touching Cilium:
 
 ```bash
 dmesg -T | grep -i "killed process"
@@ -99,31 +128,31 @@ kubectl top nodes
 
 ---
 
-## Mapa del repositorio
+## Repository map
 
 ```
 proxmox-tofu-k8s/
-├── infra/          OpenTofu: definición de las VMs sobre Proxmox
-├── ansible/        Configuración del SO y bootstrap de kubeadm
+├── infra/          OpenTofu: the VMs, defined on Proxmox
+├── ansible/        OS configuration and kubeadm bootstrap
 │   ├── roles/
 │   └── playbooks/
-├── gitops/         Todo lo que vive DENTRO de Kubernetes
-│   ├── bootstrap/        Application raíz (patrón app-of-apps)
+├── gitops/         Everything that lives INSIDE Kubernetes
+│   ├── bootstrap/        Root Application (app-of-apps pattern)
 │   ├── infrastructure/   MetalLB, cert-manager, Envoy, Sealed Secrets, cloudflared
-│   └── apps/             Aplicaciones
-├── scripts/        Utilidades que corren en el host Proxmox, fuera de Kubernetes
+│   └── apps/             Applications
+├── scripts/        Utilities that run on the Proxmox host, outside Kubernetes
 └── docs/
-    ├── BITACORA.md              Fases, decisiones y trayectoria de lo ejecutado
-    └── roadmap-homelab-k8s.md   Procedimiento completo con comandos
+    ├── BITACORA.md              Phases, decisions and the trail of what was executed
+    └── roadmap-homelab-k8s.md   Full procedure with commands
 ```
 
-`TODO.md` (raíz) es la lista de trabajo pendiente. Es local: está en `.gitignore` a propósito.
+`TODO.md` (root) is the working list. It is local: deliberately in `.gitignore`.
 
 ---
 
-## Reconstrucción desde cero
+## Rebuild from scratch
 
-El día que esto funcione sin consultar notas, el proyecto está terminado:
+The day this works without consulting notes, the project is done:
 
 ```bash
 cd infra/ && tofu destroy -auto-approve
@@ -134,16 +163,16 @@ kubectl apply -f ../gitops/bootstrap/root-app.yaml
 
 ---
 
-## Reglas de trabajo
+## Working rules
 
-1. **Snapshot antes de cada experimento.** Cuesta 10 segundos.
-2. **Nada entra al cluster sin pasar por Git** (desde la Fase 5). Si te descubres haciendo
-   `kubectl apply`, párate.
-3. **Un cambio a la vez.** Cuando algo falle, quieres una sola variable sospechosa.
-4. **Toda carga lleva `limits` de memoria.** Sin excepciones.
-5. **Antes de instalar cualquier chart, mide su consumo:**
+1. **Snapshot before every experiment.** It costs 10 seconds.
+2. **Nothing enters the cluster without going through Git** (from Phase 5 on). If you catch
+   yourself running `kubectl apply`, stop.
+3. **One change at a time.** When something breaks, you want a single suspect.
+4. **Every workload carries memory `limits`.** No exceptions.
+5. **Measure a chart's footprint before installing it:**
    `kubectl top pods -A --sort-by=memory`.
-6. **Fija versiones.** Nada de `latest`.
-7. **Verifica los backups restaurando.** Un backup no probado no es un backup.
-8. **Documenta la decisión, no el comando.** El comando está en el roadmap; el *porqué* va a
+6. **Pin versions.** No `latest`.
+7. **Verify backups by restoring them.** An untested backup is not a backup.
+8. **Document the decision, not the command.** The command is in the roadmap; the *why* goes to
    `docs/BITACORA.md`.
