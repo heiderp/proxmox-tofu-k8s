@@ -510,6 +510,55 @@ Git en menos de un minuto. Eso es `selfHeal`, y es todo el concepto en una frase
 
 **Verificación / checkpoint:** un commit aparece en el cluster sin tocar la terminal.
 
+### 5.4-5.6 — El loop cerrado (2026-09-05)
+
+**Cilium se queda fuera de ArgoCD.** Es la única pieza de `infrastructure/` sin `application.yaml`,
+y la frontera que establece vale para todo lo que venga después: *lo que el cluster necesita para
+existir lo pone Ansible, lo que vive dentro lo pone Argo.* Tres razones, la primera decisiva:
+
+1. **Paradoja de bootstrap.** `cluster.yml` tiene que dejar un cluster funcional antes de que Argo
+   exista. Con Argo como dueño del CNI, una reconstrucción no tendría red hasta que Argo arrancara
+   — y Argo no arranca sin red.
+2. **Dos dueños.** El rol de Ansible hace `helm upgrade` en cada pasada; `selfHeal` lo desharía. El
+   conflicto no daría un error claro, daría reinicios del CNI a intervalos aleatorios.
+3. **Radio de explosión.** `prune` sobre el CNI tumba la red de los tres nodos a la vez, incluido
+   el ArgoCD que tendría que arreglarlo.
+
+**Hueco del roadmap en el filtro del root-app.** El roadmap apunta la Application raíz a
+`gitops/infrastructure` con `include: '*/application.yaml'`, y en el paso siguiente coloca podinfo
+en `gitops/apps/podinfo/` — que ese filtro no descubre nunca. Corregido a `path: gitops` con
+`include: '*/*/application.yaml'`, que cubre las dos carpetas y sigue dejando fuera el propio
+`bootstrap/root-app.yaml`. Que el root-app no se autogestione es deliberado: una Application capaz
+de reescribir su propia definición es un lazo del que no se sale si se rompe.
+
+El filtro no es cosmético. Sin él Argo intentaría parsear los `values.yaml` de cada chart como
+manifiestos de Kubernetes y fallaría: no son objetos con `apiVersion`/`kind`.
+
+**ArgoCD adoptando su propio release de Helm.** Declarado como Application multi-source — chart de
+`argoproj.github.io/argo-helm`, valores de este repo vía `ref` — para no tener que vendorizar
+10 000 líneas de plantillas por seis límites de memoria. La sincronización se hizo **a mano** por
+si reescribir los metadatos de propiedad reiniciaba los pods de ArgoCD a mitad del proceso.
+
+No los reinició, y el porqué merece anotarse: Argo marcó **40 de 43 recursos como `OutOfSync`**,
+pero renderizar el chart contra el cluster vivo dio **cero líneas suprimidas**. La diferencia era
+de *propiedad*, no de contenido — la etiqueta de tracking que Helm había puesto y Argo aún no
+reclamaba. El único objeto creado fue el Job `argocd-redis-secret-init`, un hook `pre-install` que
+ya había caducado por TTL. Los cuatro pods conservaron su `AGE` original.
+
+> Que Argo diga `OutOfSync` no implica que vaya a cambiar nada. Antes de asustarse, renderizar el
+> chart y comparar:
+> ```bash
+> helm template <release> <repo>/<chart> --version <v> -n <ns> -f values.yaml | kubectl diff -f -
+> ```
+
+`helm list -n argocd` sigue mostrando el release, pero ya no manda: el Secret
+`sh.helm.release.v1.argocd.v1` queda huérfano en el namespace. Inofensivo, y conviene saberlo
+antes de creerse su salida.
+
+**El loop, probado:** commit `546c65f` (activar `automated` en la app `argocd`) pusheado a GitHub y
+recogido por Argo **solo**, sin un `kubectl apply`. Tardó entre 2 y 4 minutos, coherente con el
+`timeout.reconciliation` de 180 s por defecto.
+
 **Incidencias:** —
 
 ---
@@ -688,7 +737,7 @@ nadie intervenga.
 | 2 — Plantilla cloud-init | 2026-08-24 | ~1 h | Plantilla 9000 sobre `local-lvm`; clon de prueba listo en 16 s |
 | 3 — OpenTofu | 2026-08-25 → 2026-08-28 | — | 3 VMs desde código; ciclo `destroy`+`apply` en 48 s; state cifrado verificado |
 | 4 — kubeadm | 2026-08-28 → 2026-09-02 | ~2 h + 4.10 | v1.35.8 + Cilium 1.20.1; 3 nodos `Ready`, snapshot `cluster-limpio`. Cerrada con los roles de Ansible: reconstrucción completa en 4 min 41 s (ver [4.10](#410--de-los-comandos-a-los-roles-2026-09-02)) |
-| 5 — ArgoCD | 2026-09-02 → _en curso_ | — | 5.1-5.3: ArgoCD 10.7.0 (v3.5.2) por Helm con `values.yaml` versionado, dex y notifications fuera. El paso 5.9 del roadmap se elimina: los límites nacen en Git |
+| 5 — ArgoCD | 2026-09-02 → _en curso_ | — | 5.1-5.3: ArgoCD 10.7.0 (v3.5.2) por Helm con `values.yaml` versionado, dex y notifications fuera. El paso 5.9 del roadmap se elimina: los límites nacen en Git. 5.4-5.6 el 2026-09-05: root-app aplicado, ArgoCD gestionándose a sí mismo, Cilium fuera de Argo (ver [5.4-5.6](#54-56--el-loop-cerrado-2026-09-05)) |
 | 6 — Plataforma | — | — | |
 | 7 — Cloudflare Tunnel | — | — | |
 | 8 — Observabilidad | — | — | |

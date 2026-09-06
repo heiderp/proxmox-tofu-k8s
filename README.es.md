@@ -30,8 +30,9 @@ preparar el **CKA**.
 | 10 | (Opcional) Cluster API / Talos | ⬜ |
 
 Hoy: 3 nodos `Ready` con Cilium, reconstruibles desde cero en **4 min 41 s** — `tofu destroy` +
-`apply` (53 s) y una sola pasada del playbook de Ansible (3 min 48 s). ArgoCD ya instalado; falta
-cerrar el loop de GitOps.
+`apply` (53 s) y una sola pasada del playbook de Ansible (3 min 48 s). El loop de GitOps ya está
+cerrado: ArgoCD se gestiona a sí mismo desde este repositorio y un commit llega al cluster sin
+tocar la terminal. Falta la primera aplicación desplegada por esa vía.
 
 El detalle de **por qué** existe cada fase, qué se decidió en ella y qué falló por el camino está
 en [`docs/BITACORA.md`](docs/BITACORA.md). El procedimiento paso a paso, con comandos, está en
