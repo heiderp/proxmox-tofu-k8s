@@ -1,0 +1,23 @@
+# Redirección 301 de HTTP a HTTPS para todo el dominio.
+#
+# Gateway API no tiene un campo `redirect` en el listener: la redirección es una
+# ruta como cualquier otra, atada al listener HTTP por `sectionName`. Sin ese
+# `sectionName` la ruta se engancharía también al listener HTTPS y redirigiría
+# HTTPS a HTTPS en bucle infinito.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: https-redirect
+  namespace: gateway-system
+spec:
+  parentRefs:
+    - name: main
+      sectionName: http
+  hostnames:
+    - "*.ph-projects.net"
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

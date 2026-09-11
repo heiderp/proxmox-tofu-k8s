@@ -57,8 +57,8 @@ metadata:
 spec:
   gatewayClassName: envoy
   listeners:
-    # De momento solo HTTP. El listener HTTPS:443 y la redirección 301 entran con
-    # el certificado wildcard, en el paso 6.7.
+    # HTTP solo existe para redirigir. La redirección en sí es un HTTPRoute aparte
+    # —`redirect.yaml`—, porque Gateway API no la expresa en el listener.
     - name: http
       protocol: HTTP
       port: 80
@@ -67,4 +67,20 @@ spec:
           # Las rutas viven junto a su aplicación —`podinfo/`, `argocd/`—, no aquí.
           # Un Gateway que solo aceptara rutas de su propio namespace obligaría a
           # centralizarlas y rompería esa vecindad.
+          from: All
+
+    - name: https
+      protocol: HTTPS
+      port: 443
+      # `hostname` acota el listener al dominio: una petición con cualquier otro
+      # Host ni siquiera llega a la fase de rutas.
+      hostname: "*.ph-projects.net"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          # El Secret lo crea cert-manager en este mismo namespace. Si viviera en
+          # otro haría falta un ReferenceGrant que lo autorizara.
+          - name: wildcard-ph-projects-net-tls
+      allowedRoutes:
+        namespaces:
           from: All
