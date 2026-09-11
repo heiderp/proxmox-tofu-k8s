@@ -1,0 +1,49 @@
+# Sealed Secrets — cómo entra un secreto a un repo público sin dejar de ser secreto.
+#
+# Se cifra con la llave PÚBLICA del cluster, así que el resultado puede vivir en Git
+# a la vista de cualquiera; solo el controlador, con la llave privada que nunca sale
+# del cluster, puede descifrarlo. Eso es lo que permite que el token de Cloudflare
+# del paso 6.8 esté commiteado.
+#
+# El repo Helm que documenta el roadmap (`bitnami-labs.github.io/sealed-secrets`) ya
+# no existe: devuelve 404. El proyecto se movió a `bitnami/sealed-secrets` y el chart
+# vivo se publica en `bitnami.github.io/sealed-secrets`.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sealed-secrets
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+
+  sources:
+    - repoURL: https://bitnami.github.io/sealed-secrets
+      chart: sealed-secrets
+      # Chart 2.20.0 = controlador 0.40.0. El CLI `kubeseal` de la máquina de
+      # trabajo tiene que ir a la misma versión del controlador.
+      targetRevision: 2.20.0
+      helm:
+        releaseName: sealed-secrets
+        valueFiles:
+          - $values/gitops/infrastructure/sealed-secrets/values.yaml
+
+    - repoURL: https://github.com/heiderp/proxmox-tofu-k8s.git
+      targetRevision: main
+      ref: values
+
+  destination:
+    server: https://kubernetes.default.svc
+    # `kube-system` no es capricho: es lo que `kubeseal` asume por defecto. Moverlo
+    # obligaría a pasar `--controller-namespace` en cada invocación, y ese es el tipo
+    # de detalle que se olvida justo el día que hay prisa.
+    namespace: kube-system
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

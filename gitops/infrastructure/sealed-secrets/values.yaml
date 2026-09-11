@@ -1,0 +1,20 @@
+# Valores del controlador de Sealed Secrets.
+
+# `kubeseal` busca por defecto un controlador llamado `sealed-secrets-controller`.
+# Sin esto el release se llamaría `sealed-secrets` y el CLI no lo encontraría.
+fullnameOverride: sealed-secrets-controller
+
+# Un controlador pequeño que solo observa objetos SealedSecret y descifra. En reposo
+# ronda los 20 MiB.
+resources:
+  limits:
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+# Rotación de la llave de sellado: cada 30 días se genera una nueva y las anteriores
+# se conservan para poder descifrar lo ya sellado. Importante para el backup del paso
+# 6.6 — hay que respaldar TODAS las llaves, no solo la primera, y volver a hacerlo
+# cada vez que rote.
+keyrenewperiod: "720h"
