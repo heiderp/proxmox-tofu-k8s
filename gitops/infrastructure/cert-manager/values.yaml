@@ -1,0 +1,48 @@
+# Valores de cert-manager.
+
+crds:
+  # Viene en `false` por defecto: sin esto el chart instala los controladores y
+  # ningún CRD, y el fallo aparece después, al crear el ClusterIssuer.
+  enabled: true
+  # Los CRDs sobreviven a un borrado del release. Sin esto, quitar la Application
+  # se llevaría por delante todos los Certificate y Issuer del cluster.
+  keep: true
+
+# Controlador principal: observa Certificate, resuelve los desafíos ACME y guarda
+# el resultado en Secrets.
+resources:
+  limits:
+    memory: 192Mi
+  requests:
+    cpu: 10m
+    memory: 96Mi
+
+# Webhook de validación. Rechaza manifiestos mal formados antes de que lleguen a
+# etcd; es el componente más pequeño de los tres.
+webhook:
+  resources:
+    limits:
+      memory: 96Mi
+    requests:
+      cpu: 10m
+      memory: 32Mi
+
+# Inyecta el CA bundle en los webhooks. Mantiene en memoria un caché de los
+# objetos que vigila, así que es el que más pide de los tres pese a hacer menos.
+cainjector:
+  resources:
+    limits:
+      memory: 192Mi
+    requests:
+      cpu: 10m
+      memory: 96Mi
+
+# Job de un solo uso que comprueba que la API de cert-manager responde antes de dar
+# la instalación por buena. Sin límites por defecto.
+startupapicheck:
+  resources:
+    limits:
+      memory: 64Mi
+    requests:
+      cpu: 10m
+      memory: 32Mi

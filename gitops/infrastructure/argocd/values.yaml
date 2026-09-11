@@ -25,9 +25,11 @@
 
 configs:
   params:
-    # TLS propio de argocd-server. Pasar a true en la Fase 6, cuando el Gateway
-    # termine el TLS por delante y este doble cifrado sobre.
-    server.insecure: false
+    # TLS propio de argocd-server, apagado desde la Fase 6.4: el Gateway termina
+    # el TLS por delante y este segundo cifrado sobra. Con esto en `false` el
+    # Gateway hablaría HTTP contra un backend que exige HTTPS, y la respuesta es
+    # un 502 que no explica nada.
+    server.insecure: true
 
   # Registros Helm que no son repos HTTP. Envoy Gateway solo se publica por OCI
   # —no existe un `index.yaml` suyo en ninguna parte—, y una Application no puede

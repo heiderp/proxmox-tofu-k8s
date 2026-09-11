@@ -1,0 +1,46 @@
+# local-path-provisioner — PersistentVolumes sobre el disco del propio nodo.
+#
+# En esta topología no es un punto de partida, es el destino. Longhorn pide ~500 MB
+# por nodo solo para sus agentes, lo que se comería la mitad del cluster; Rook/Ceph
+# está más lejos todavía.
+#
+# La limitación que hay que aceptar: el pod queda atado al nodo donde se creó su
+# volumen. Si ese nodo cae, el pod no se reprograma. Los PV NO son de alta
+# disponibilidad, y conviene verlo una vez con un PVC de prueba en vez de leerlo.
+#
+# No hay repo Helm oficial: el chart vive dentro del repo git de Rancher, así que la
+# source es el propio repo fijado al tag.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: local-path
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+
+  sources:
+    - repoURL: https://github.com/rancher/local-path-provisioner.git
+      targetRevision: v0.0.37
+      path: deploy/chart/local-path-provisioner
+      helm:
+        releaseName: local-path
+        valueFiles:
+          - $values/gitops/infrastructure/local-path/values.yaml
+
+    - repoURL: https://github.com/heiderp/proxmox-tofu-k8s.git
+      targetRevision: main
+      ref: values
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: local-path-storage
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

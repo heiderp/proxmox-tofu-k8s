@@ -1,0 +1,26 @@
+# La UI de ArgoCD por el Gateway.
+#
+# Segunda ruta, y la que demuestra que el enrutado por Host discrimina de verdad:
+# dos hostnames sobre la misma IP, dos backends en namespaces distintos.
+#
+# Requiere `server.insecure: true` en el values.yaml de ArgoCD. Sin eso el Gateway
+# habla HTTP contra un backend que exige HTTPS y la respuesta es un 502 que no
+# explica nada.
+#
+# Queda accesible desde la LAN sin autenticación delante. Aceptable mientras no haya
+# túnel; el candado real es Cloudflare Access y es el paso 7.6.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: argocd
+  namespace: argocd
+spec:
+  parentRefs:
+    - name: main
+      namespace: gateway-system
+  hostnames:
+    - argocd.ph-projects.net
+  rules:
+    - backendRefs:
+        - name: argocd-server
+          port: 80

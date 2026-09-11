@@ -1,0 +1,25 @@
+# El checkpoint de la Fase 6: podinfo alcanzable por su hostname a través del
+# Gateway, sobre una IP de MetalLB.
+#
+# La ruta vive junto a la aplicación y no en `gateway-system` a propósito. El
+# Gateway acepta rutas de cualquier namespace (`from: All`), así que cada app se
+# lleva la suya; centralizarlas convertiría el namespace del Gateway en un cajón
+# que hay que tocar cada vez que nace una app.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: podinfo
+  namespace: podinfo
+spec:
+  parentRefs:
+    - name: main
+      namespace: gateway-system
+  # Enrutado por Host. Sin esto la ruta capturaría cualquier petición que llegue a
+  # la IP, y dejaría de probar lo único que Gateway API aporta sobre un NodePort.
+  hostnames:
+    - podinfo.ph-projects.net
+  rules:
+    - backendRefs:
+        # Mismo namespace que la ruta, así que no hace falta ReferenceGrant.
+        - name: podinfo
+          port: 9898

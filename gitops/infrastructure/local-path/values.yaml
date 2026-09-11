@@ -1,0 +1,43 @@
+# Valores de local-path-provisioner.
+
+storageClass:
+  create: true
+  name: local-path
+  # La StorageClass por defecto del cluster: un PVC sin `storageClassName` cae aquí.
+  # No hay otra candidata, y sin una marcada por defecto los PVC se quedan en
+  # `Pending` sin decir por qué.
+  defaultClass: true
+  # `Delete`: al borrar el PVC se borra el directorio del nodo. Es un laboratorio, y
+  # `Retain` iría dejando datos huérfanos en discos de 20 GB.
+  reclaimPolicy: Delete
+  # El volumen no se crea hasta que hay un pod programado. Es lo que hace que el
+  # directorio acabe en el nodo correcto en vez de en uno cualquiera.
+  volumeBindingMode: WaitForFirstConsumer
+
+# Dónde caen los directorios. `/opt` y no `/var`: en estos nodos `/` es un solo disco
+# de 20 GB, así que da igual la ruta, pero deja el volumen fuera del árbol que usa
+# containerd y hace evidente de quién es cada cosa al mirar el nodo.
+nodePathMap:
+  - node: DEFAULT_PATH_FOR_NON_LISTED_NODES
+    paths:
+      - /opt/local-path-provisioner
+
+replicaCount: 1
+
+# El provisioner en sí: un controlador diminuto que solo crea directorios.
+resources:
+  limits:
+    memory: 64Mi
+  requests:
+    cpu: 10m
+    memory: 32Mi
+
+# Pod efímero que hace el `mkdir`/`rm` dentro del nodo. Vive segundos, pero la
+# convención del repo no hace excepciones.
+helperPod:
+  resources:
+    limits:
+      memory: 32Mi
+    requests:
+      cpu: 10m
+      memory: 16Mi

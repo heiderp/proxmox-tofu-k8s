@@ -1,0 +1,35 @@
+# La ruta HTTP de podinfo, aparte de su Application principal.
+#
+# Va en su propia Application porque `podinfo` se despliega desde un chart y el
+# `HTTPRoute` no sale de él: es un objeto nuestro. Wave 2 — necesita el Gateway,
+# que es wave 1.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: podinfo-route
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/heiderp/proxmox-tofu-k8s.git
+    targetRevision: main
+    path: gitops/apps/podinfo-route/manifests
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: podinfo
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 2m
