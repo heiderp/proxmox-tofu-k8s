@@ -1,0 +1,53 @@
+# Envoy Gateway — el plano de control de Gateway API.
+#
+# Se salta Ingress por completo: la API está congelada e `ingress-nginx` llegó a fin
+# de vida en marzo de 2026. Gateway API además ya entró al temario del CKA, así que
+# aprenderla sirve dos veces.
+#
+# Este chart trae los CRDs de Gateway API DENTRO (`crds.enabled: true`): 21 CRDs con
+# `bundle-version: v1.6.1`. Por eso no hay un paso previo que los instale aparte —el
+# roadmap mandaba un `kubectl apply` del `standard-install.yaml`, prohibido desde 5.6—
+# y por eso controlador y CRDs no pueden desalinearse: salen del mismo artefacto.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: envoy-gateway
+  namespace: argocd
+  annotations:
+    # Wave 0: el controlador y los CRDs. El GatewayClass y el Gateway van en
+    # `envoy-gateway-config`, wave 1, porque son CR de estos mismos CRDs.
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+
+  sources:
+    # Registro OCI, no repo HTTP: Envoy Gateway no publica `index.yaml` en ninguna
+    # parte. El registro se declara en `configs.repositories` del values.yaml de
+    # ArgoCD, sin credenciales.
+    - repoURL: docker.io/envoyproxy
+      chart: gateway-helm
+      targetRevision: v1.9.1
+      helm:
+        releaseName: envoy-gateway
+        valueFiles:
+          - $values/gitops/infrastructure/envoy-gateway/values.yaml
+
+    - repoURL: https://github.com/heiderp/proxmox-tofu-k8s.git
+      targetRevision: main
+      ref: values
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gateway-system
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # Obligatorio, no precavido: los 21 CRDs son ~4 MB de YAML. Del lado del
+      # cliente, `last-applied-configuration` se pasa de los 262 144 bytes que
+      # admite `metadata.annotations`, y el error que sale no menciona el tamaño.
+      - ServerSideApply=true

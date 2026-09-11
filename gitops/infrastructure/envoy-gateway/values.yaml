@@ -1,0 +1,30 @@
+# Valores de Envoy Gateway. Solo el plano de control: los recursos del proxy de
+# Envoy (el plano de datos) NO se configuran aquí, sino con el CR `EnvoyProxy` de
+# `envoy-gateway-config` — el chart no los expone.
+
+deployment:
+  # Un solo control plane. Dos réplicas con 1 GB útil por worker no compran nada:
+  # si cae, los proxies ya desplegados siguen sirviendo tráfico con su última
+  # configuración.
+  replicas: 1
+  envoyGateway:
+    # El chart pide por defecto 1024Mi de límite y 256Mi de request, dimensionado
+    # para clusters con cientos de rutas. Aquí hay dos.
+    resources:
+      limits:
+        memory: 256Mi
+      requests:
+        # Sin `limits.cpu`: estrangular la CPU no mata el pod, lo ralentiza.
+        cpu: 50m
+        memory: 128Mi
+
+# Job de un solo uso (hook de Helm) que genera los certificados del webhook. Sin
+# límites por defecto; la convención del repo no hace excepciones con los Jobs.
+certgen:
+  job:
+    resources:
+      limits:
+        memory: 64Mi
+      requests:
+        cpu: 10m
+        memory: 32Mi

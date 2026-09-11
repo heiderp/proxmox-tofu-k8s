@@ -29,6 +29,17 @@ configs:
     # termine el TLS por delante y este doble cifrado sobre.
     server.insecure: false
 
+  # Registros Helm que no son repos HTTP. Envoy Gateway solo se publica por OCI
+  # —no existe un `index.yaml` suyo en ninguna parte—, y una Application no puede
+  # tirar de un registro OCI que ArgoCD no conozca. Sin credenciales: el registro
+  # es público, esta entrada solo declara que hay que hablarle en OCI.
+  repositories:
+    envoyproxy-oci:
+      name: envoyproxy
+      type: helm
+      url: docker.io/envoyproxy
+      enableOCI: "true"
+
 # Reconcilia el estado del cluster contra Git. Es el corazón de ArgoCD y un
 # StatefulSet, no un Deployment.
 controller:

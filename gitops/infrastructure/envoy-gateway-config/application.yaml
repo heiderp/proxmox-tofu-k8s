@@ -1,0 +1,36 @@
+# La configuración de Envoy Gateway: qué clase de Gateway existe, con qué recursos
+# corre su plano de datos y qué puertos escucha.
+#
+# Aparte del chart por el mismo motivo que en MetalLB: `GatewayClass`, `Gateway` y
+# `EnvoyProxy` son Custom Resources y no pueden aplicarse antes que los CRDs que los
+# definen. Wave 1 espera a que la wave 0 esté Healthy.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: envoy-gateway-config
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/heiderp/proxmox-tofu-k8s.git
+    targetRevision: main
+    path: gitops/infrastructure/envoy-gateway-config/manifests
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gateway-system
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 2m
