@@ -13,11 +13,12 @@ metadata:
   namespace: gateway-system
 spec:
   secretName: wildcard-ph-projects-net-tls
-  # Empieza en staging: el certificado que emite NO lo reconoce ningún navegador,
-  # sirve para comprobar que el desafío DNS-01 funciona de punta a punta. Pasar a
-  # `letsencrypt-prod` cuando emita limpio es cambiar esta línea.
+  # Producción desde el 2026-09-11. Staging emitió limpio antes —el certificado
+  # que firma no lo reconoce ningún navegador, pero demuestra lo único que podía
+  # fallar: que el token tiene permisos, que cert-manager escribe el TXT y que
+  # los dos nombres validan—. El endpoint es lo único que cambia.
   issuerRef:
-    name: letsencrypt-staging
+    name: letsencrypt-prod
     kind: ClusterIssuer
   dnsNames:
     # El wildcard NO cubre el dominio desnudo: `*.ph-projects.net` vale para
