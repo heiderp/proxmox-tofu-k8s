@@ -14,6 +14,11 @@ spec:
   parentRefs:
     - name: main
       namespace: gateway-system
+      # Solo al listener HTTPS. Sin `sectionName` la ruta se engancha también al
+      # listener HTTP, y ahí le gana a la redirección `*.ph-projects.net` porque
+      # su hostname es más específico: el resultado es un 200 en claro donde
+      # debería haber un 301.
+      sectionName: https
   # Enrutado por Host. Sin esto la ruta capturaría cualquier petición que llegue a
   # la IP, y dejaría de probar lo único que Gateway API aporta sobre un NodePort.
   hostnames:

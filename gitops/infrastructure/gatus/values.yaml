@@ -16,6 +16,8 @@ gateway:
     parentRefs:
       - name: main
         namespace: gateway-system
+        # Solo HTTPS: en el listener HTTP manda la redirección.
+        sectionName: https
     hosts:
       - estado.ph-projects.net
 
