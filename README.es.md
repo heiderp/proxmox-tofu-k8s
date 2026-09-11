@@ -22,8 +22,8 @@ preparar el **CKA**.
 | 2 | Plantilla cloud-init reutilizable | ✅ |
 | 3 | OpenTofu creando las VMs | ✅ |
 | 4 | Cluster kubeadm funcionando | ✅ |
-| 5 | ArgoCD y el loop de GitOps | 🔜 en curso |
-| 6 | Plataforma: red, TLS, secretos | ⬜ |
+| 5 | ArgoCD y el loop de GitOps | ✅ |
+| 6 | Plataforma: red, TLS, secretos | 🔜 en curso |
 | 7 | Exposición pública con Cloudflare | ⬜ |
 | 8 | Observabilidad y backups | ⬜ |
 | 9 | Entrenamiento CKA | ⬜ |
@@ -31,8 +31,8 @@ preparar el **CKA**.
 
 Hoy: 3 nodos `Ready` con Cilium, reconstruibles desde cero en **4 min 41 s** — `tofu destroy` +
 `apply` (53 s) y una sola pasada del playbook de Ansible (3 min 48 s). El loop de GitOps ya está
-cerrado: ArgoCD se gestiona a sí mismo desde este repositorio y un commit llega al cluster sin
-tocar la terminal. Falta la primera aplicación desplegada por esa vía.
+cerrado: ArgoCD se gestiona a sí mismo desde este repositorio, podinfo se desplegó con un solo
+push y un Deployment escalado a diez réplicas a mano vuelve a lo que dice Git en unos dos segundos.
 
 El detalle de **por qué** existe cada fase, qué se decidió en ella y qué falló por el camino está
 en [`docs/BITACORA.md`](docs/BITACORA.md). El procedimiento paso a paso, con comandos, está en

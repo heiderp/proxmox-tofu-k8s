@@ -21,8 +21,8 @@ Secondary goal, just as important: use the cluster as a demolition lab to prepar
 | 2 | Reusable cloud-init template | ✅ |
 | 3 | OpenTofu creating the VMs | ✅ |
 | 4 | Working kubeadm cluster | ✅ |
-| 5 | ArgoCD and the GitOps loop | 🔜 in progress |
-| 6 | Platform: networking, TLS, secrets | ⬜ |
+| 5 | ArgoCD and the GitOps loop | ✅ |
+| 6 | Platform: networking, TLS, secrets | 🔜 in progress |
 | 7 | Public exposure via Cloudflare | ⬜ |
 | 8 | Observability and backups | ⬜ |
 | 9 | CKA training | ⬜ |
@@ -30,8 +30,8 @@ Secondary goal, just as important: use the cluster as a demolition lab to prepar
 
 Today: 3 nodes `Ready` with Cilium, rebuildable from nothing in **4 min 41 s** — `tofu destroy` +
 `apply` (53 s) plus a single Ansible playbook run (3 min 48 s). The GitOps loop is closed: ArgoCD
-manages itself from this repository, and a commit reaches the cluster without touching a terminal.
-What is missing is the first application deployed that way.
+manages itself from this repository, podinfo was deployed by a single push, and a Deployment
+scaled to ten replicas by hand is back to what Git says in about two seconds.
 
 The **why** behind each phase, what was decided and what broke along the way lives in
 [`docs/BITACORA.md`](docs/BITACORA.md) (Spanish). The step-by-step procedure, with commands, is in

@@ -482,7 +482,7 @@ solos a `Running`.
 
 ---
 
-## Fase 5 — GitOps con ArgoCD ⬜
+## Fase 5 — GitOps con ArgoCD ✅
 
 **Qué construye:** el loop que cierra el proyecto — un commit en Git se convierte solo en estado
 del cluster.
@@ -563,7 +563,51 @@ recogido por Argo **solo**, sin un `kubectl apply`. Tardó entre 2 y 4 minutos, 
 
 ---
 
-## Fase 6 — La plataforma ⬜
+### 5.7-5.8 — La primera app y `selfHeal` medido (2026-09-11)
+
+**podinfo y no una aplicación propia.** Expone `/healthz`, `/readyz`, un `/env` y un endpoint para
+forzar errores y latencia. Eso la convierte en diana de tres cosas que vienen después — el
+`HTTPRoute` de la 6.4, los escenarios de red de la Fase 9 y el `ServiceMonitor` de la 8.2 — y en
+reposo ronda los 15 MiB, que es lo único que hay. Una app propia llega cuando exista un pipeline
+que la construya; hoy no lo hay.
+
+Mismo patrón multi-source que la Application de ArgoCD: chart del repo del autor, valores de este
+repo vía `$values`. Namespace propio con `CreateNamespace=true`, no `default`: la Fase 9 practica
+borrados y evictions aquí y conviene que el radio de daño tenga un borde. El resto del chart queda
+apagado a propósito — `ingress`, `hpa`, `serviceMonitor` y `redis` tienen cada uno su paso en el
+roadmap, y ninguno debe entrar por la puerta de atrás dentro de una app de prueba.
+
+**El loop, otra vez y sin intervención.** El commit se pusheó con el cluster apagado. Al encender,
+el `application-controller` arrancó, hizo su primer ciclo de reconciliación y creó
+`Application/podinfo` solo. La secuencia en su log —`Tasks (dry-run) ... Application:argocd/podinfo
+nil->obj` seguido de `application.argoproj.io/podinfo created`— es el root-app descubriendo un
+archivo nuevo con el filtro `*/*/application.yaml`. Del `git push` al pod `Running` no hubo un solo
+`kubectl apply`.
+
+**El experimento del 5.8, con reloj:**
+
+```
+17:01:30  kubectl -n podinfo scale deploy podinfo --replicas=10
+17:01:31  "Updated sync status: Synced -> OutOfSync"
+17:01:31  "Initiated automated sync to '6.15.0, 7d8ac57'"
+17:01:32  spec.replicas = 1
+```
+
+**~2 segundos**, no el "menos de un minuto" que estimaba la nota de la fase. La diferencia importa
+porque desmonta una confusión fácil: el `timeout.reconciliation` de 180 s es el intervalo con el
+que Argo va a *preguntarle a Git* si hay commits nuevos. Un desvío hecho contra el cluster no
+espera a ese reloj — el controlador tiene un watch sobre la API de Kubernetes, ve el `Deployment`
+modificado al instante y compara contra los manifiestos que ya tiene cacheados. Dos relojes
+distintos: los cambios en Git tardan minutos, la deriva en el cluster se corrige en segundos.
+
+La operación llega con `SelfHealAttemptsCount: 2` y un backoff de 5 s. No es casualidad: si el
+desvío se repitiera en bucle, Argo espaciaría los intentos en vez de pelearse con quien lo provoca.
+
+**Incidencias:** —
+
+---
+
+## Fase 6 — La plataforma 🔜
 
 **Qué construye:** las piezas transversales que necesita cualquier aplicación: IPs de
 LoadBalancer, enrutamiento HTTP, certificados, secretos y almacenamiento. Todo desplegado vía
@@ -737,7 +781,7 @@ nadie intervenga.
 | 2 — Plantilla cloud-init | 2026-08-24 | ~1 h | Plantilla 9000 sobre `local-lvm`; clon de prueba listo en 16 s |
 | 3 — OpenTofu | 2026-08-25 → 2026-08-28 | — | 3 VMs desde código; ciclo `destroy`+`apply` en 48 s; state cifrado verificado |
 | 4 — kubeadm | 2026-08-28 → 2026-09-02 | ~2 h + 4.10 | v1.35.8 + Cilium 1.20.1; 3 nodos `Ready`, snapshot `cluster-limpio`. Cerrada con los roles de Ansible: reconstrucción completa en 4 min 41 s (ver [4.10](#410--de-los-comandos-a-los-roles-2026-09-02)) |
-| 5 — ArgoCD | 2026-09-02 → _en curso_ | — | 5.1-5.3: ArgoCD 10.7.0 (v3.5.2) por Helm con `values.yaml` versionado, dex y notifications fuera. El paso 5.9 del roadmap se elimina: los límites nacen en Git. 5.4-5.6 el 2026-09-05: root-app aplicado, ArgoCD gestionándose a sí mismo, Cilium fuera de Argo (ver [5.4-5.6](#54-56--el-loop-cerrado-2026-09-05)) |
+| 5 — ArgoCD | 2026-09-02 → 2026-09-11 | — | 5.1-5.3: ArgoCD 10.7.0 (v3.5.2) por Helm con `values.yaml` versionado, dex y notifications fuera. El paso 5.9 del roadmap se elimina: los límites nacen en Git. 5.4-5.6 el 2026-09-05: root-app aplicado, ArgoCD gestionándose a sí mismo, Cilium fuera de Argo (ver [5.4-5.6](#54-56--el-loop-cerrado-2026-09-05)). 5.7-5.8 el 2026-09-11: podinfo desplegado con un solo push y `selfHeal` revirtiendo un escalado a 10 réplicas en ~2 s (ver [5.7-5.8](#57-58--la-primera-app-y-selfheal-medido-2026-09-11)) |
 | 6 — Plataforma | — | — | |
 | 7 — Cloudflare Tunnel | — | — | |
 | 8 — Observabilidad | — | — | |
