@@ -25,9 +25,9 @@ preparar el **CKA**.
 | 5 | ArgoCD y el loop de GitOps | ✅ |
 | 6 | Plataforma: red, TLS, secretos | ✅ |
 | 7 | Exposición pública con Cloudflare | 🔜 en curso |
-| 8 | Observabilidad y backups | ⬜ |
+| 8 | Observabilidad y backups | ⬜ *(en parte, a la espera de RAM)* |
 | 9 | Entrenamiento CKA | ⬜ |
-| 10 | (Opcional) Cluster API / Talos | ⬜ |
+| 10 | (Opcional) Cluster API / Talos | ⏸ *esperando hardware* |
 
 Hoy: 3 nodos `Ready` con Cilium, reconstruibles desde cero en **4 min 41 s** — `tofu destroy` +
 `apply` (53 s) y una sola pasada del playbook de Ansible (3 min 48 s). El loop de GitOps ya está
@@ -38,6 +38,13 @@ Encima de eso corre una plataforma: las aplicaciones responden por su propio hos
 Let's Encrypt emite y renueva solo, por desafío DNS-01 y **sin un puerto abierto en el router**.
 Costó 27 CRDs nuevos y ~670 MiB de requests, y deja unos 700 MiB de margen en el worker más
 cargado — la cifra que decide qué se puede permitir la Fase 8.
+
+Dos cosas las frena esa cifra y no el tiempo, y conviene decir cuáles. La pila de métricas de la
+Fase 8 presupuesta ~900 MB y quedan ~750 MiB libres en el worker más cargado, así que espera; el
+resto de esa fase —`metrics-server`, Velero y la prueba de restauración— sí cabe y sigue adelante
+sin ella. La Fase 10 necesita un segundo cluster conviviendo con este, y 8 GB no dan para eso. Las
+dos son una restricción medida y asumida, no una lista abandonada: el presupuesto de memoria es el
+dato de diseño alrededor del cual está organizado todo el repositorio.
 
 El detalle de **por qué** existe cada fase, qué se decidió en ella y qué falló por el camino está
 en [`docs/BITACORA.md`](docs/BITACORA.md). El procedimiento paso a paso, con comandos, está en

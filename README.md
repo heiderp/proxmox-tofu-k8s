@@ -24,9 +24,9 @@ Secondary goal, just as important: use the cluster as a demolition lab to prepar
 | 5 | ArgoCD and the GitOps loop | ✅ |
 | 6 | Platform: networking, TLS, secrets | ✅ |
 | 7 | Public exposure via Cloudflare | 🔜 in progress |
-| 8 | Observability and backups | ⬜ |
+| 8 | Observability and backups | ⬜ *(partly gated on RAM)* |
 | 9 | CKA training | ⬜ |
-| 10 | (Optional) Cluster API / Talos | ⬜ |
+| 10 | (Optional) Cluster API / Talos | ⏸ *waiting on hardware* |
 
 Today: 3 nodes `Ready` with Cilium, rebuildable from nothing in **4 min 41 s** — `tofu destroy` +
 `apply` (53 s) plus a single Ansible playbook run (3 min 48 s). The GitOps loop is closed: ArgoCD
@@ -37,6 +37,13 @@ On top of that runs a platform: applications answer on their own hostnames over 
 Encrypt issues and renews by itself, through a DNS-01 challenge, with **no open port on the
 router**. It cost 27 new CRDs and ~670 MiB of requests, which leaves roughly 700 MiB of headroom
 on the tighter worker — the number that decides what phase 8 can afford.
+
+Two items are held back by that number rather than by time, and it is worth being explicit about
+which. Phase 8's metrics stack budgets ~900 MB and there are ~750 MiB free on the tighter worker,
+so it waits — everything else in that phase, `metrics-server`, Velero and the restore drill, fits
+and goes ahead without it. Phase 10 needs a second cluster alongside this one, which 8 GB cannot
+hold at all. Both are a measured constraint that was accepted, not a list that was abandoned: the
+memory budget is the design input this whole repository is organised around.
 
 The **why** behind each phase, what was decided and what broke along the way lives in
 [`docs/BITACORA.md`](docs/BITACORA.md) (Spanish). The step-by-step procedure, with commands, is in
