@@ -1,0 +1,35 @@
+# El rango de IPs que MetalLB reparte a los Service de tipo LoadBalancer.
+#
+# POR QUÉ .60-.79 Y NO .200-.220, que es lo que decía el roadmap: el rango DHCP del
+# router no se pudo consultar, así que se midió la red. Barrido del /24 el 2026-09-11:
+# nueve hosts vivos, y los cuatro clientes DHCP en .101, .102, .104 y .108 —
+# consecutivos hacia arriba desde .100. Eso demuestra dónde EMPIEZA el pool; de dónde
+# termina no hay ni un dato (.199, .249 y .254 son todos valores por defecto comunes).
+#
+# .200-.220 apostaría por el dato que no se tiene. .60-.79 queda por debajo del inicio
+# medido y pegado a .51-.53, un bloque ya probado: las tres VMs llevan semanas ahí sin
+# un solo conflicto ARP. Si algún día se conoce el rango real del router, ampliar esto
+# es un commit.
+#
+# Una colisión aquí se depura fatal: el servicio responde de forma intermitente, según
+# quién conteste al ARP, y el síntoma apunta al cluster en vez de al DHCP.
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: lan-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    - 192.168.1.60-192.168.1.79
+---
+# Modo L2: el speaker responde a las peticiones ARP de las IPs del pool desde un nodo
+# elegido por elección. No es balanceo — todo el tráfico de una IP entra por un solo
+# nodo—, pero es lo único que funciona sin un router que hable BGP.
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: lan-l2
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+    - lan-pool

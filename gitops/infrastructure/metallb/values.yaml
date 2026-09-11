@@ -1,0 +1,31 @@
+# Valores de MetalLB. Fuente de verdad: cambiar esto y hacer push modifica el cluster.
+
+# El backend BGP viene ACTIVADO por defecto en el chart 0.16 y despliega un DaemonSet
+# de frr-k8s con contenedores FRR en los tres nodos, más seis CRDs y un webhook
+# propio. Aquí sobra entero: la red de casa es una sola L2 con un router doméstico que
+# no habla BGP, y el anuncio se hace por ARP.
+frrk8s:
+  enabled: false
+
+# Ambos componentes son binarios de Go pequeños: en reposo rondan los 20-30 MiB. Los
+# límites son generosos frente a eso y baratos frente al presupuesto del cluster.
+controller:
+  resources:
+    limits:
+      memory: 128Mi
+    requests:
+      # Sin `limits.cpu`: estrangular la CPU no mata el pod, lo ralentiza, y el
+      # síntoma no apunta a la causa.
+      cpu: 10m
+      memory: 64Mi
+
+speaker:
+  # El modo FRR embebido está obsoleto en favor de frr-k8s, y los dos sobran aquí.
+  frr:
+    enabled: false
+  resources:
+    limits:
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi

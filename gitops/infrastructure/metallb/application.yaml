@@ -1,0 +1,58 @@
+# MetalLB — el que hace que `type: LoadBalancer` signifique algo en bare metal.
+#
+# Sin cloud provider, un Service de tipo LoadBalancer se queda en `<pending>` para
+# siempre: nadie asigna la IP externa. MetalLB pone ese trozo que falta.
+#
+# Se parte en dos Applications a propósito. Ésta instala el controlador y sus CRDs;
+# `metallb-config` crea los objetos `IPAddressPool` y `L2Advertisement`, que no pueden
+# existir antes que los CRDs que los definen. El orden lo impone la sync-wave de la
+# otra, no la suerte.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: metallb
+  namespace: argocd
+  annotations:
+    # Wave 0: primero el controlador y los CRDs.
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+
+  # Mismo patrón multi-source del resto del repo: chart upstream, valores de aquí.
+  sources:
+    - repoURL: https://metallb.github.io/metallb
+      chart: metallb
+      # Fijada. Nada de canales móviles.
+      targetRevision: 0.16.1
+      helm:
+        releaseName: metallb
+        valueFiles:
+          - $values/gitops/infrastructure/metallb/values.yaml
+
+    - repoURL: https://github.com/heiderp/proxmox-tofu-k8s.git
+      targetRevision: main
+      ref: values
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: metallb-system
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+
+    # El speaker corre con `hostNetwork: true` y capacidades de red elevadas. Si algún
+    # día se activa Pod Security Admission en el cluster, sin esta etiqueta el
+    # DaemonSet dejaría de arrancar y el síntoma no apuntaría aquí.
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: privileged
+
+    syncOptions:
+      - CreateNamespace=true
+      # Los CRDs de MetalLB son grandes. Aplicados del lado del cliente, la anotación
+      # `last-applied-configuration` puede pasarse de los 262 144 bytes que admite
+      # `metadata.annotations`, y el error que sale no menciona el tamaño.
+      - ServerSideApply=true

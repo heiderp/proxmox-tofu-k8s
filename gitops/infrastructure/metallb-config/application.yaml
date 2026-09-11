@@ -1,0 +1,42 @@
+# Configuración de MetalLB: de qué IPs dispone y cómo las anuncia.
+#
+# Va en una Application aparte de `metallb` por una razón de orden: `IPAddressPool` y
+# `L2Advertisement` son Custom Resources, y no pueden aplicarse antes de que existan
+# los CRDs que los definen. La sync-wave 1 hace que el root-app espere a que la wave 0
+# —el controlador y sus CRDs— esté Healthy antes de crear esta Application.
+#
+# Los manifiestos cuelgan de `manifests/` y no de esta misma carpeta a propósito: una
+# Application cuyo `path` contuviera su propia definición se renderizaría a sí misma.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: metallb-config
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/heiderp/proxmox-tofu-k8s.git
+    targetRevision: main
+    path: gitops/infrastructure/metallb-config/manifests
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: metallb-system
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      # Si esta Application se sincroniza antes de que los CRDs estén registrados, el
+      # apply falla con `no matches for kind "IPAddressPool"`. La sync-wave lo evita,
+      # el retry lo cubre igualmente: es barato y quita una clase entera de fallo.
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 2m

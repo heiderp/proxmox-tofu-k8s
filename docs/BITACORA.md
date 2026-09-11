@@ -619,8 +619,25 @@ los secretos no tienen forma segura de vivir en un repo. Esta fase rellena esos 
 
 **Decisiones tomadas:**
 
-- **MetalLB en modo L2**, repartiendo IPs del rango reservado en la Fase 0. Es lo que da sentido
-  a `type: LoadBalancer` en bare metal.
+- **MetalLB en modo L2**, repartiendo IPs de un rango de la LAN. Es lo que da sentido a
+  `type: LoadBalancer` en bare metal.
+- **El rango es `192.168.1.60-79`, no el `.200-220` del roadmap.** El router no se pudo consultar,
+  así que se midió la red (2026-09-11): nueve hosts vivos en el `/24` y los cuatro clientes DHCP en
+  `.101`, `.102`, `.104` y `.108`, consecutivos hacia arriba. Eso prueba dónde *empieza* el pool;
+  dónde termina sigue siendo desconocido, y `.199`, `.249` y `.254` son todos valores por defecto
+  habituales. El rango alto apostaba por el único dato que falta; el bajo se apoya en el que sí
+  hay, y además va pegado a `.51-.53`, donde las VMs llevan semanas sin un conflicto ARP. El coste
+  de equivocarse no es simétrico: cambiar el `IPAddressPool` es un commit hoy, pero en la Fase 7
+  esa IP ya vive dentro de la configuración de cloudflared.
+- **El backend BGP del chart de MetalLB se apaga a mano.** Desde el chart 0.16 `frrk8s.enabled`
+  viene en `true` por defecto: despliega un DaemonSet de frr-k8s con contenedores FRR en los tres
+  nodos, seis CRDs más y un webhook propio. En una red doméstica de una sola L2, con un router que
+  no habla BGP, sobra entero — y con 1 GB útil por worker no es un detalle estético.
+- **Cilium podría sustituir a MetalLB y no lo hace.** Cilium 1.20 sabe anunciar L2 con
+  `CiliumLoadBalancerIPPool`, lo que ahorraría el DaemonSet del speaker. Requiere
+  `kubeProxyReplacement`, que el `values.yaml` de Cilium deja fuera a propósito porque el CKA
+  asume kube-proxy. Ahorrar ~100 MiB a cambio de estudiar contra una topología que el examen no
+  usa es mal cambio.
 - **Gateway API + Envoy Gateway, saltándose Ingress por completo.** Ingress está congelado e
   `ingress-nginx` llegó a fin de vida en marzo de 2026. Además Gateway API ya entró al temario del
   CKA, así que aprenderlo sirve dos veces. Los CRDs se instalan aparte del controlador.
