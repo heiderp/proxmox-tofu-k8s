@@ -1,0 +1,38 @@
+# Valores de podinfo. Fuente de verdad: cambiar esto y hacer push modifica el
+# Deployment que corre. Ver `gitops/apps/podinfo/application.yaml`.
+
+# Una sola réplica. Es la cifra que el paso 5.8 va a intentar romper a mano para ver
+# a Argo revertirlo, y son ~1 GB de allocatable por worker: dos réplicas de una app
+# de demostración no se justifican.
+replicaCount: 1
+
+resources:
+  # Límite de memoria obligatorio (convención del repo). podinfo en reposo ronda los
+  # 15 MiB; 64 MiB deja margen para las pruebas de carga de `/api/echo` sin que un
+  # bucle mal medido se coma el nodo.
+  limits:
+    memory: 64Mi
+  requests:
+    # Sin `limits.cpu`: estrangular la CPU no mata el pod, lo ralentiza, y el síntoma
+    # no apunta a la causa.
+    cpu: 10m
+    memory: 32Mi
+
+# ClusterIP. La exposición hacia fuera es Gateway API + MetalLB en la Fase 6; un
+# NodePort ahora sería una vía paralela que luego habría que desmontar.
+service:
+  type: ClusterIP
+
+ui:
+  message: "desplegado por ArgoCD desde git — sin tocar la terminal"
+
+# Todo lo demás, apagado: cada pieza tiene su propio paso en el roadmap y ninguna
+# debe entrar por la puerta de atrás dentro de esta app.
+ingress:
+  enabled: false      # Fase 6.4, y con HTTPRoute, no con Ingress
+hpa:
+  enabled: false      # necesita metrics-server, que es 8.1
+serviceMonitor:
+  enabled: false      # necesita VictoriaMetrics, que es 8.2
+redis:
+  enabled: false      # el caché de podinfo no aporta nada aquí y son 100 MiB más

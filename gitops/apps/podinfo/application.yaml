@@ -1,0 +1,51 @@
+# Primera aplicación desplegada por la vía de GitOps (paso 5.7).
+#
+# Nadie aplica este archivo. El root-app lo descubre con su filtro
+# `*/*/application.yaml`, y `apps/podinfo/application.yaml` casa. La única acción
+# que existe es un `git push`.
+#
+# podinfo y no una app propia a propósito: expone `/healthz`, `/readyz`, un endpoint
+# `/env` y un botón para forzar errores. Sirve de diana para el Gateway de la Fase 6
+# y para los escenarios de red de la Fase 9, y cabe en la memoria que hay.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: podinfo
+  namespace: argocd
+spec:
+  project: default
+
+  # Mismo patrón multi-source que `infrastructure/argocd`: chart del repo del autor,
+  # valores de este repo. Vendorizar el chart solo para tocar cuatro valores sería
+  # copiar plantillas que luego nadie actualiza.
+  sources:
+    - repoURL: https://stefanprodan.github.io/podinfo
+      chart: podinfo
+      # Fijada. Renovate abrirá el PR cuando salga la siguiente (paso 8.8).
+      targetRevision: 6.15.0
+      helm:
+        releaseName: podinfo
+        valueFiles:
+          - $values/gitops/apps/podinfo/values.yaml
+
+    - repoURL: https://github.com/heiderp/proxmox-tofu-k8s.git
+      targetRevision: main
+      # Sin `path`: esta source solo aporta el archivo de valores.
+      ref: values
+
+  destination:
+    server: https://kubernetes.default.svc
+    # Namespace propio. No `default`: la Fase 9 practica borrados y evictions aquí,
+    # y conviene que el radio de daño tenga un borde claro.
+    namespace: podinfo
+
+  syncPolicy:
+    automated:
+      prune: true
+      # Lo que hace posible el paso 5.8: `kubectl scale --replicas=10` dura hasta la
+      # siguiente pasada del controlador.
+      selfHeal: true
+    syncOptions:
+      # El namespace no existe todavía y nadie lo va a crear a mano.
+      - CreateNamespace=true
