@@ -607,7 +607,7 @@ desvío se repitiera en bucle, Argo espaciaría los intentos en vez de pelearse 
 
 ---
 
-## Fase 6 — La plataforma 🔜
+## Fase 6 — La plataforma ✅
 
 **Qué construye:** las piezas transversales que necesita cualquier aplicación: IPs de
 LoadBalancer, enrutamiento HTTP, certificados, secretos y almacenamiento. Todo desplegado vía
@@ -663,7 +663,90 @@ Gateway, sobre una IP de MetalLB, y todos los manifiestos están en Git.
 
 ---
 
-## Fase 7 — Exposición pública con Cloudflare Tunnel ⬜
+### 6.1-6.10 — La plataforma, construida (2026-09-11)
+
+Once commits, de `2011596` a `d75e30c`. Todo entró por `git push`; las únicas tres acciones
+manuales están documentadas abajo y ninguna fue configuración.
+
+**Los CRDs de Gateway API no existen como paso.** El roadmap manda un
+`kubectl apply -f standard-install.yaml` de Gateway API v1.5.0 antes de instalar el controlador.
+Sobra: el chart de Envoy Gateway v1.9.1 trae `crds.enabled: true`, que instala **21 CRDs** —los de
+Gateway API con `bundle-version: v1.6.1` y los suyos propios—. Eso elimina de paso la única
+violación pendiente de la prohibición de `kubectl apply` vigente desde 5.6, y hace imposible que
+controlador y CRDs se desalineen: salen del mismo artefacto.
+
+Son ~4 MB de YAML, y ahí aparece una consecuencia que no es opcional: **`ServerSideApply=true`**.
+Aplicados del lado del cliente, la anotación `last-applied-configuration` se pasa de los 262 144
+bytes que admite `metadata.annotations`, y el error que sale no menciona el tamaño.
+
+**Envoy Gateway solo se publica por OCI.** No hay `index.yaml` suyo en ninguna parte. El registro
+se declara en `configs.repositories` del `values.yaml` **del propio ArgoCD** —que se gestiona a sí
+mismo, así que es un commit más— sin credenciales: el registro es público y la entrada solo dice
+que hay que hablarle en OCI.
+
+**El plano de datos no se dimensiona desde el chart.** El `values.yaml` de Envoy Gateway configura
+el *controlador*; el proxy de Envoy que atiende el tráfico sale de un CR `EnvoyProxy` al que
+apunta el `GatewayClass` por `parametersRef`. Sin él, Envoy arranca con los valores por defecto del
+proyecto, pensados para producción. Recortado a 256Mi y `concurrency: 1`: Envoy crea un hilo por
+core visible y cada hilo lleva su propia copia de buffers y estadísticas, así que con un Gateway y
+tres rutas el segundo hilo solo suma memoria.
+
+**La IP del Gateway se fija a mano dentro del pool** (`metallb.io/loadBalancerIPs: 192.168.1.60`).
+Si se dejara elegir, borrar y recrear el Gateway podría devolver otra IP y los registros DNS de
+Cloudflare apuntarían al vacío.
+
+**Un solo certificado wildcard.** Uno por hostname significaría un desafío ACME por aplicación
+nueva. Con el wildcard, añadir un servicio es un `HTTPRoute` y nada más. Van los dos nombres
+—`*.ph-projects.net` y `ph-projects.net`— porque el comodín no cubre el dominio desnudo.
+
+**DNS-01, y staging antes que producción.** HTTP-01 exige que Let's Encrypt alcance el puerto 80 de
+este cluster desde internet, que es exactamente lo que esta topología no tiene; y tampoco emite
+wildcards. Staging existe porque producción limita a 5 fallos por cuenta y hora: quemar ese margen
+depurando deja el dominio bloqueado justo cuando ya casi funciona. Lo que staging demostró —y por
+eso el paso a producción fue cambiar una línea— es que el token tiene permisos, que cert-manager
+escribe el TXT y que los dos nombres validan. Emitido a la primera en ambos casos: **2 min 52 s**
+en staging, y el de producción vence el 2026-12-10.
+
+**El SealedSecret del token vive en `cert-manager`, no en `gateway-system`.** Un `ClusterIssuer` no
+tiene namespace, así que cert-manager busca los Secrets a los que apunta en el suyo propio —el
+*cluster resource namespace*—. En cualquier otro sitio el emisor falla diciendo que el secreto no
+existe. Y el cifrado va atado al nombre **y** al namespace: mover cualquiera de los dos obliga a
+volver a sellar.
+
+**Gatus, fuera del roadmap.** Su configuración *es* un ConfigMap, así que cabe entera en un
+`values.yaml` sin base de datos ni nada que administrar por UI. Vigila el host Proxmox, que es lo
+que más veces ha parado este proyecto, por TCP contra el puerto de su API: el ping necesitaría
+sockets raw que el contenedor no tiene, y una API que responde dice más que una interfaz que
+contesta al ARP. No sustituye a la Fase 8: Gatus dice **si** algo responde, las métricas dicen
+**por qué** no. Son 25 MiB frente a ~900 MB, y por eso llega dos fases antes.
+
+**Coste y margen.** 27 CRDs nuevos y ~670 MiB de requests. Los workers pasaron del 28 % al 53 % y
+62 % de su allocatable, con ~1034 MiB y ~752 MiB reales libres. La Fase 8 planea VictoriaMetrics con
+~900 MB: **no cabe**. O se recorta, o espera a que haya más hardware.
+
+**Una excepción de verificación, anotada por serlo.** El paso 6.9 se probó con un PVC y un pod
+efímeros aplicados con `kubectl apply` y borrados después. No es configuración —no quedó nada en el
+cluster— pero conviene que esté escrito: el PV quedó con `nodeAffinity` fijando `k8s-wk-1`, que es
+la limitación asumida de `local-path` vista en vez de leída.
+
+**Reproducibilidad: afirmada, no medida.** El `destroy` + `apply` completo no se ejecuta desde la
+4.10. Lo que está declarado en Git se reconstruye solo —incluida la memoria del controlador, porque
+Ansible instala ArgoCD con el `values.yaml` que ya dice 640Mi—. Lo que **no** sobrevive a una
+reconstrucción:
+
+- **El `SealedSecret` del token.** La llave privada se genera al instalar el controlador; un cluster
+  nuevo genera otra y el archivo commiteado pasa a ser ruido indescifrable. Solo se salva
+  restaurando el backup del paso 6.6.
+- **Los tres registros DNS**, creados a mano en el panel de Cloudflare. Candidatos a OpenTofu con el
+  provider de Cloudflare en la Fase 7, junto al hostname del túnel.
+- El token en sí y el CLI `kubeseal`: pasos manuales de la máquina de trabajo.
+
+**Incidencias:** cinco, todas en la tabla del final. La que más tiempo costó —el controlador de Argo
+muriendo por OOM sin dar un solo error— merece leerse antes de la Fase 8.
+
+---
+
+## Fase 7 — Exposición pública con Cloudflare Tunnel 🔜
 
 **Qué construye:** acceso desde internet a las aplicaciones del cluster, con TLS válido y sin
 abrir un solo puerto en el router.
@@ -799,7 +882,7 @@ nadie intervenga.
 | 3 — OpenTofu | 2026-08-25 → 2026-08-28 | — | 3 VMs desde código; ciclo `destroy`+`apply` en 48 s; state cifrado verificado |
 | 4 — kubeadm | 2026-08-28 → 2026-09-02 | ~2 h + 4.10 | v1.35.8 + Cilium 1.20.1; 3 nodos `Ready`, snapshot `cluster-limpio`. Cerrada con los roles de Ansible: reconstrucción completa en 4 min 41 s (ver [4.10](#410--de-los-comandos-a-los-roles-2026-09-02)) |
 | 5 — ArgoCD | 2026-09-02 → 2026-09-11 | — | 5.1-5.3: ArgoCD 10.7.0 (v3.5.2) por Helm con `values.yaml` versionado, dex y notifications fuera. El paso 5.9 del roadmap se elimina: los límites nacen en Git. 5.4-5.6 el 2026-09-05: root-app aplicado, ArgoCD gestionándose a sí mismo, Cilium fuera de Argo (ver [5.4-5.6](#54-56--el-loop-cerrado-2026-09-05)). 5.7-5.8 el 2026-09-11: podinfo desplegado con un solo push y `selfHeal` revirtiendo un escalado a 10 réplicas en ~2 s (ver [5.7-5.8](#57-58--la-primera-app-y-selfheal-medido-2026-09-11)) |
-| 6 — Plataforma | — | — | |
+| 6 — Plataforma | 2026-09-11 | ~3 h | MetalLB 0.16.1 (`.60-79`), Envoy Gateway 1.9.1 con Gateway API v1.6.1, Sealed Secrets 2.20.0, cert-manager 1.21.2 con wildcard de Let's Encrypt por DNS-01, local-path 0.0.37 y Gatus. 27 CRDs nuevos, ~670 MiB de requests (ver [6.1-6.10](#61-610--la-plataforma-construida-2026-09-11)) |
 | 7 — Cloudflare Tunnel | — | — | |
 | 8 — Observabilidad | — | — | |
 | 9 — CKA | — | — | |
@@ -847,6 +930,13 @@ El segundo, descubierto al preparar la Fase 3 y con efecto directo sobre la Fase
 | 2026-08-25 | `install-opentofu.sh` → `The release is signed with the incorrect key: ` | Bug del instalador con GPG 2.4+ y `keyboxd`; la firma es válida | Instalación manual verificando firma y SHA256 aparte |
 | 2026-08-28 | `tofu apply` → `dial tcp 192.168.1.20:8006: connect: no route to host`, con `ping` OK | Corte transitorio de red en la máquina de trabajo (túnel VPN activo). El `plan` no lo detecta: con state vacío no consulta la API | Reintentar. Comprobar antes con `curl -sk https://192.168.1.20:8006/`, no con `ping` |
 | 2026-08-28 | `Host key verification failed` en `.51`-`.53` tras `destroy`+`apply` | VMs nuevas = host keys nuevas para IPs ya conocidas | `ssh-keygen -R <ip>`. En la Fase 4, Ansible necesitará `host_key_checking = False` |
+| 2026-09-11 | Root-app parado a media sincronización **sin ningún error**, con todas las Applications hijas en verde | El `application-controller` en `OOMKilled`: cachea el estado de todo lo que vigila y la Fase 6 le metió 27 CRDs de golpe | Subir el límite de 384Mi a 640Mi. **Cuando una sincronización se cuelga sin fallar, comprobar si el controlador sigue vivo antes que ninguna otra cosa** |
+| 2026-09-11 | El controlador no podía aplicarse su propia subida de memoria | Bloqueo circular: el único componente capaz de aplicar cambios de Git es justo el que está roto | `kubectl set resources` a mano, la misma excepción que el paso 5.1. En una instalación desde cero no ocurre: Ansible ya instala ArgoCD con el valor correcto |
+| 2026-09-11 | `kubectl set resources` actualizó el StatefulSet y el pod siguió con los valores viejos | El rolling update de un StatefulSet no puede reemplazar un pod atascado en `CrashLoopBackOff` | Borrar el pod a mano para que se recree con la revisión nueva |
+| 2026-09-11 | Argo devolvió el límite a 384Mi después de haberlo arreglado | Sincronizó con el `values.yaml` de su caché de revisiones (~3 min), anterior al commit que lo subía | Repetir el arreglo pasado el poll. Dentro de esa ventana no se gana una discusión con Argo |
+| 2026-09-11 | HTTP devolvía 200 en claro donde debía haber un 301 | Las rutas de aplicación se enganchan a **todos** los listeners del Gateway, y en HTTP el hostname exacto de la app gana al `*.dominio` de la redirección | `sectionName: https` en cada ruta de aplicación; el listener HTTP se queda solo con la redirección |
+| 2026-09-11 | El chart de MetalLB 0.16 despliega un DaemonSet de FRR que nadie pidió | `frrk8s.enabled` viene en **`true`** por defecto desde esa versión: backend BGP, seis CRDs más y un webhook propio | `frrk8s.enabled: false`. En una L2 doméstica con un router que no habla BGP no hace nada |
+| 2026-09-11 | cert-manager instalado y el `ClusterIssuer` fallando por CRD inexistente | `crds.enabled` viene en **`false`** en el chart: instala los controladores y ningún CRD, y el fallo aparece un paso después | `crds.enabled: true` y `keep: true`, para que quitar el release no se lleve por delante los Certificate del cluster |
 | 2026-08-28 | El patch de `KubeletConfiguration` se ignoraba sin error | `nodeRegistration.patches` es de `v1beta3`; en `v1beta4` va a nivel raíz. kubeadm sólo emite un warning | Mover `patches:` a la raíz de `InitConfiguration` y comprobar el `--dry-run` |
 | 2026-08-28 | CoreDNS en `ContainerCreating`: `failed to find plugin "loopback" in path [/usr/lib/cni]` | containerd de Debian usa `bin_dir=/usr/lib/cni` (vacío); Cilium instala en `/opt/cni/bin` | `bin_dir = "/opt/cni/bin"` en `/etc/containerd/config.toml` + `systemctl restart containerd` |
 | 2026-08-28 | `sandbox_image` de containerd = `pause:3.8`, kubeadm espera `pause:3.10.1` | Valor por defecto del containerd de Debian, más antiguo que el que pide k8s 1.35 | Alinear con `kubeadm config images list \| grep pause` antes del `init` |

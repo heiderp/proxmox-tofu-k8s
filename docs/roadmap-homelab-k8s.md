@@ -1015,7 +1015,7 @@ metadata:
   namespace: metallb-system
 spec:
   addresses:
-    - 192.168.1.200-192.168.1.220   # el rango que reservaste en la Fase 0
+    - 192.168.1.60-192.168.1.79   # ver nota abajo: NO es el rango de la Fase 0
 ---
 apiVersion: metallb.io/v1beta1
 kind: L2Advertisement
@@ -1026,17 +1026,28 @@ spec:
   ipAddressPools: [lan-pool]
 ```
 
+> **El rango cambió a `.60-.79` al ejecutar la fase (2026-09-11).** El router no se pudo consultar,
+> así que se midió la red: los cuatro clientes DHCP estaban en `.101`-`.108`, consecutivos desde
+> `.100`. Eso prueba dónde *empieza* el pool DHCP y no dice nada de dónde termina, y `.199`, `.249`
+> y `.254` son todos valores por defecto habituales. El rango bajo se apoya en el dato que sí
+> existe. El porqué completo, en [`BITACORA.md`](BITACORA.md).
+
 ### 6.2 Gateway API + Envoy Gateway
 
 Salta Ingress por completo — está congelado y `ingress-nginx` llegó a fin de vida en marzo de 2026. Gateway API también entró al temario del CKA, así que aprenderlo te sirve doble.
 
-Primero los CRDs (van aparte del controlador):
+> **Los CRDs ya no van aparte, y este `kubectl apply` no se ejecutó nunca.** El chart de Envoy
+> Gateway (v1.9.1, solo por OCI) trae `crds.enabled: true`, que instala los 21 CRDs —los de Gateway
+> API con `bundle-version: v1.6.1` y los propios de Envoy Gateway—. Además de ahorrarse el paso,
+> evita que controlador y CRDs se desalineen: salen del mismo artefacto. Y obliga a
+> `ServerSideApply=true` en la Application: son ~4 MB de YAML, y del lado del cliente la anotación
+> `last-applied-configuration` revienta el límite de `metadata.annotations` con un error que no
+> menciona el tamaño.
+>
+> ~~`kubectl apply -f .../gateway-api/releases/download/v1.5.0/standard-install.yaml`~~ — y de
+> haberlo necesitado, habría que haberlo metido en Git: `kubectl apply` está prohibido desde 5.6.
 
-```bash
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.0/standard-install.yaml
-```
-
-Luego Envoy Gateway como Application de Argo, y define tu Gateway:
+Envoy Gateway va como Application de Argo. Define tu Gateway:
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
@@ -1083,6 +1094,12 @@ spec:
 ### 6.3 Secretos
 
 Con ArgoCD, la opción más simple es **Sealed Secrets**: cifras con la llave pública del cluster, el resultado es seguro en Git público, y solo el controlador dentro del cluster puede descifrarlo.
+
+> **El repo Helm cambió de sitio.** `bitnami-labs.github.io/sealed-secrets` devuelve 404 y el
+> proyecto pasó a `bitnami/sealed-secrets`. El chart vivo está en
+> `https://bitnami.github.io/sealed-secrets` — versión 2.20.0, controlador 0.40.0. Se instala en
+> `kube-system` con `fullnameOverride: sealed-secrets-controller`, que es lo que `kubeseal` asume
+> por defecto.
 
 ```bash
 # CLI
