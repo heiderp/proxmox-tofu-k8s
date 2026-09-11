@@ -44,12 +44,18 @@ configs:
 
 # Reconcilia el estado del cluster contra Git. Es el corazón de ArgoCD y un
 # StatefulSet, no un Deployment.
+#
+# Subido de 384Mi a 640Mi en la Fase 6.2: el controlador mantiene en memoria un
+# caché del estado de TODO lo que vigila, y esa fase le metió 27 CRDs nuevos de
+# golpe —21 de Gateway API y Envoy Gateway, 6 de cert-manager—. Se quedó en
+# `OOMKilled` con 6 reinicios, y el síntoma no fue un error: fue un root-app
+# parado a media sincronización, esperando a que una wave terminara.
 controller:
   resources:
     limits:
-      memory: 384Mi
+      memory: 640Mi
     requests:
-      memory: 192Mi
+      memory: 256Mi
       cpu: 100m
 
 # El que más consume: clona los repos y renderiza los charts de Helm. Si empieza
