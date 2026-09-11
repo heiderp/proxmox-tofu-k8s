@@ -1,0 +1,33 @@
+# El token de la API de Cloudflare, cifrado con la llave pública del cluster.
+#
+# Esto es texto público a propósito: descifrarlo exige la llave privada, que vive
+# dentro del cluster y no sale de ahí. Es lo que permite que un repo abierto
+# contenga la credencial que cert-manager necesita para escribir el TXT del
+# desafío DNS-01.
+#
+# Se generó así, sin que el valor pasara por el historial del shell:
+#   kubectl create secret generic cloudflare-api-token -n cert-manager \
+#     --dry-run=client --from-file=api-token=<archivo> -o yaml \
+#   | kubeseal --controller-name sealed-secrets-controller \
+#       --controller-namespace kube-system --format yaml
+#
+# El namespace es `cert-manager` y no `gateway-system`: un ClusterIssuer no tiene
+# namespace, así que cert-manager busca los Secrets a los que apunta en SU propio
+# namespace —el «cluster resource namespace»—. Puesto en cualquier otro sitio, el
+# emisor falla diciendo que el secreto no existe.
+#
+# El cifrado va atado a este nombre Y a este namespace. Mover cualquiera de los dos
+# lo invalida: hay que volver a sellar.
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: cloudflare-api-token
+  namespace: cert-manager
+spec:
+  encryptedData:
+    api-token: AgBtwwWgWWejWqxc9ALRdiPpycspYdjCgrpubrhWA9ZEbQ18cNwLK71lElllekMh38YMLY+adbKOjEY1aMWkQz/VBUomXqT5bZyYIbUVXLAYvMBRwodGi93Snb2yNM22f+ObbeGuVyuCb1AOxh+/gjxApwd+1kCItpQPF5G/XDfF5QRYO8k67GKhCq+A421clyuuppPH0qf3wrcEbHmN7AK21zTmXmIYHIzgHv9NNqKNy9C0A9lircjYe9juOBQ+TRL5ZF6zOT9AbB973Z14f1PYoaaaqP1JO3mnA787qqVrX4LRvLorrJT7OC/UnYfbuAZIcl98aHkY4tMs5q/u/mCd8bD9nNABhz7+UWxb8lf8eNSKU9up9sxdB/b6akEUD0kmAkI0zcrjYOLxwVDtZnnqRMvJGqC9PQN5Atwd4wWWRF4Cxr5FVBS3mdmL8Tlk/hnXhBvquRfOiK472bvHIbozhzOSQBV0ihArNOYgmmqpuxkwLhBDZVdFl7om7x8tHI1BK8qYN2t5lat8M7rU2sSI3Y/I14thqbQ9cT5Cv1dashjVQnpgTfIqwjG01XL5/G989FJFQQcf37dfRCrqRl4JvKhLfmd2Y+d3Br3ipCFeyZTkkNT6ojbF61AkwN3lXKRE4P+uNHXwB32HEhcCxs3iTPQv2B3Audzj9DSRKtDwv406JlHvpo6Q1aJhtZlepEVBEKdtjhywkYewiDtF/g40udyx4sa/OK1o0gTz4tmxWDYo80cNPYVmazXxmvbictKicMQMvA==
+  template:
+    metadata:
+      name: cloudflare-api-token
+      namespace: cert-manager

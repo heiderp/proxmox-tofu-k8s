@@ -1,0 +1,36 @@
+# Emisores y certificados. Aparte del chart de cert-manager por el motivo de
+# siempre: son Custom Resources de los CRDs que instala ese chart.
+#
+# El namespace de destino es `gateway-system` y no `cert-manager`: el Secret con el
+# certificado tiene que nacer donde vive el Gateway que lo consume. Los
+# `ClusterIssuer` no tienen namespace, así que les da igual.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager-config
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/heiderp/proxmox-tofu-k8s.git
+    targetRevision: main
+    path: gitops/infrastructure/cert-manager-config/manifests
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gateway-system
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 2m

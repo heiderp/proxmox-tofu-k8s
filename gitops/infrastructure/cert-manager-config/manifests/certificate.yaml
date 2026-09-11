@@ -1,0 +1,26 @@
+# Un solo certificado wildcard para todo el homelab.
+#
+# Un certificado por hostname significaría un desafío ACME por cada app nueva y una
+# petición más a Let's Encrypt cada vez. Con el wildcard, añadir un servicio es un
+# HTTPRoute y nada más.
+#
+# El Secret nace en `gateway-system` porque es donde el listener HTTPS del Gateway
+# lo lee; un Secret de otro namespace necesitaría un ReferenceGrant.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wildcard-ph-projects-net
+  namespace: gateway-system
+spec:
+  secretName: wildcard-ph-projects-net-tls
+  # Empieza en staging: el certificado que emite NO lo reconoce ningún navegador,
+  # sirve para comprobar que el desafío DNS-01 funciona de punta a punta. Pasar a
+  # `letsencrypt-prod` cuando emita limpio es cambiar esta línea.
+  issuerRef:
+    name: letsencrypt-staging
+    kind: ClusterIssuer
+  dnsNames:
+    # El wildcard NO cubre el dominio desnudo: `*.ph-projects.net` vale para
+    # `podinfo.ph-projects.net` pero no para `ph-projects.net`. Por eso van los dos.
+    - "*.ph-projects.net"
+    - "ph-projects.net"
