@@ -1,0 +1,46 @@
+# Gatus — página de estado y comprobador de disponibilidad.
+#
+# Fuera del roadmap, y aquí por dos motivos. El primero: su configuración ES un
+# ConfigMap, así que cabe entera en un `values.yaml` sin base de datos ni nada que
+# administrar por UI. El segundo, y el que lo justifica: vigila el host Proxmox, que
+# con diferencia es lo que más veces ha parado este proyecto.
+#
+# No sustituye a VictoriaMetrics (8.2). Gatus dice SI algo responde; las métricas
+# dicen POR QUÉ no. Son 25 MiB frente a ~900 MB, y por eso llega dos fases antes.
+#
+# No lleva `-config` aparte: el chart crea su propio HTTPRoute.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gatus
+  namespace: argocd
+  annotations:
+    # Wave 2 como las rutas: el chart crea un HTTPRoute y necesita el Gateway.
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+
+  sources:
+    - repoURL: https://twin.github.io/helm-charts
+      chart: gatus
+      targetRevision: 1.5.0
+      helm:
+        releaseName: gatus
+        valueFiles:
+          - $values/gitops/infrastructure/gatus/values.yaml
+
+    - repoURL: https://github.com/heiderp/proxmox-tofu-k8s.git
+      targetRevision: main
+      ref: values
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gatus
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

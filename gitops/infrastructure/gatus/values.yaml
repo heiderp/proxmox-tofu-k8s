@@ -1,0 +1,57 @@
+# Configuración de Gatus. Es el archivo entero: no hay estado, no hay UI que
+# administrar, y cambiar una comprobación es un commit.
+
+resources:
+  limits:
+    memory: 64Mi
+  requests:
+    cpu: 10m
+    memory: 32Mi
+
+# El chart crea el HTTPRoute por su cuenta, así que Gatus no necesita una
+# Application aparte para su ruta.
+gateway:
+  route:
+    enabled: true
+    parentRefs:
+      - name: main
+        namespace: gateway-system
+    hosts:
+      - estado.ph-projects.net
+
+config:
+  # Sin almacenamiento: el historial vive en memoria y se pierde al reiniciar. Es la
+  # opción barata y consciente — para series temporales que sobrevivan está la
+  # Fase 8.
+  storage:
+    type: memory
+
+  endpoints:
+    # El host Proxmox. TCP contra el puerto de su API y no ICMP a propósito: el ping
+    # necesita sockets raw, que este contenedor no tiene, y la API respondiendo dice
+    # más que una interfaz que contesta al ARP.
+    - name: proxmox
+      group: infraestructura
+      url: tcp://192.168.1.20:8006
+      interval: 60s
+      conditions:
+        - "[CONNECTED] == true"
+
+    # El control plane visto desde dentro del cluster.
+    - name: kube-apiserver
+      group: infraestructura
+      url: tcp://192.168.1.51:6443
+      interval: 60s
+      conditions:
+        - "[CONNECTED] == true"
+
+    # podinfo atravesando el Gateway de verdad —por su hostname, no por su Service
+    # interno—, que es lo que comprueba la cadena entera: MetalLB, Envoy, HTTPRoute
+    # y la app.
+    - name: podinfo
+      group: aplicaciones
+      url: http://podinfo.ph-projects.net/healthz
+      interval: 60s
+      conditions:
+        - "[STATUS] == 200"
+        - "[RESPONSE_TIME] < 500"
