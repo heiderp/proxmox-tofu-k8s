@@ -23,7 +23,8 @@ zerotier_members:
   # El PC vive en la LAN y llega al hub por https://192.168.1.54, sin overlay.
   # Desautorizado explícitamente: borrar la línea no lo sacaría de la red.
   pc-ph: { id: "e49513194a", authorized: false }
-#  laptop-ph: { id: "abcdef0123", authorized: true }
+  # La laptop viaja: llega al hub por ZeroTier (https://10.254.54.1).
+  laptop-ph: { id: "5c842c0f33", authorized: true }
 
 # --- Engram Cloud ---
 
@@ -63,7 +64,7 @@ engram_projects:
 # comando forzado). Una por cliente, generadas por clients/engram/install-client.sh.
 engram_grant_keys:
   - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKDKc3exhpjXFgpIyyTiu7e1sW+wACLO6jZmTdY3KSev engram-grant pc-ph"
-#  - "ssh-ed25519 AAAA... engram-grant laptop-ph"
+  - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILyQtb6c7csAYTh0syVNqnQdZAG4/vijClfZl+PD/BUR engram-grant laptop-ph"
 
 # --- Backups ---
 

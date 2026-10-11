@@ -112,12 +112,15 @@ prepare() {
     : # Sin overlay: el hub acepta el 443 desde la LAN.
   elif command -v zerotier-cli >/dev/null; then
     echo "zerotier_members:"
-    echo "  $id: { id: \"$(sudo zerotier-cli info | awk '{print $3}')\", authorized: true }"
+    # sudo -n: sin terminal (p. ej. por ssh) no hay a quién pedir la contraseña.
+    local node
+    node="$(sudo -n zerotier-cli info 2>/dev/null | awk '{print $3}')" || true
+    echo "  $id: { id: \"${node:-<sudo zerotier-cli info>}\", authorized: true }"
     echo
     echo "== Opcional: pista de camino directo cuando esté en casa (root) =="
-    echo "Con una VPN que se lleva la ruta por defecto (Surfshark/WireGuard), ZeroTier"
-    echo "cae a relay TCP y no descubre el hub aunque esté en la misma LAN (visto en"
-    echo "el PC el 2026-10-11). Fuera de casa la pista no responde y no estorba."
+    echo "Solo si 'zerotier-cli -j info' da tcpFallbackActive true y el cliente no"
+    echo "descubre el hub en la misma LAN (visto en el PC el 2026-10-11, causa no"
+    echo "determinada). Fuera de casa la pista no responde y no estorba."
     echo "  sudo install -m 0644 $here/zerotier-local.conf /var/lib/zerotier-one/local.conf"
     echo "  sudo systemctl restart zerotier-one"
     echo "(si ya existe un local.conf, fusiona la clave \"virtual\" a mano)"
