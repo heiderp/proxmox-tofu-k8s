@@ -124,10 +124,11 @@ agents. That way the workstation and a laptop share the same memory, at home or 
 
 - **Self-hosted Engram Cloud** on Postgres. Each client keeps its SQLite as the source of truth
   and syncs through autosync: with the host powered off, work carries on locally.
-- **ZeroTier with its own controller** inside the VM, no third-party account. Only the VM and the
-  clients are on the network, and the flow rules let 443 and 22 through to the hub and nothing
-  else.
-- **Caddy** issues the certificate for the overlay IP from its internal CA.
+- **ZeroTier with its own controller** inside the VM, no third-party account, for the laptop
+  when it is away; the workstation, which never leaves home, goes over the LAN. Only the VM and
+  the laptop are on the network, and the flow rules let 443 and 22 through to the hub and
+  nothing else.
+- **Caddy** issues the certificates for the overlay IP and the LAN IP from its internal CA.
 - One revocable token per machine, and grants over SSH with a forced command.
 - Its own OpenTofu state (`infra/engram/`): rebuilding the cluster never touches the memory. A
   rebuild with restore keeps the network, the CA and the tokens; it has been verified.

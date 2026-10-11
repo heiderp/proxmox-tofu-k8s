@@ -910,6 +910,12 @@ dónde ponerla, con la misma disciplina (OpenTofu, Ansible, versiones fijadas, p
   entra y no hay router de subred. Las flow rules dejan pasar TCP 443 y 22 hacia el hub y nada
   más, y los clientes no se ven entre sí. nftables en la VM repite la política por si alguien
   toca las rules: SSH solo desde la LAN y el 443 solo por la interfaz `zt*`.
+- **El PC va por la LAN; ZeroTier es para la laptop.** El PC no sale de casa, así que la overlay
+  no le aporta nada y sí le costaba: con Surfshark (WireGuard con la ruta por defecto) su
+  ZeroTier caía a relay TCP y no descubría el hub aunque estuviera en la misma LAN. El hub sirve
+  también en su IP de LAN, con nftables aceptando el 443 solo desde `192.168.1.0/24` y la
+  interfaz `zt*`. El PC queda desautorizado en la red ZT (`authorized: false`, explícito: borrar
+  la línea no lo sacaría). Cada cliente elige al instalarse: `prepare <id> lan|zt`.
 - **TLS con la CA interna de Caddy, para una IP.** Engram rechaza mandar el token por HTTP
   (`bearer token requires an HTTPS remote URL`). Caddy emite el certificado para la IP de la
   overlay, así que no hace falta DNS, dominio ni Let's Encrypt. Los clientes confían en esa CA
@@ -1009,6 +1015,7 @@ El segundo, descubierto al preparar la Fase 3 y con efecto directo sobre la Fase
 | 2026-10-11 | Tras reiniciar Caddy, los clientes fallaban con `x509: certificate signed by unknown authority` | Sin su directorio de datos, Caddy genera una CA nueva | La PKI de Caddy entra en el backup diario y el restore la repone antes de configurar Caddy |
 | 2026-10-11 | `No package matching 'zerotier-one'` con el repo recién añadido | `cache_valid_time` no refresca una caché de menos de una hora | `apt update` forzado cuando cambia el archivo del repo |
 | 2026-10-11 | 401 con el token de admin recién emitido | La regex capturaba el **prefijo** que el bootstrap imprime antes del token, y luego cortaba en el `-` que el token contiene | `egc_[A-Za-z0-9_-]{40,}`. Durante la depuración se mostró en pantalla parte de un token, que se revocó al momento (`--revoke-existing`) |
+| 2026-10-11 | El PC unido a ZeroTier se quedaba en `REQUESTING_CONFIGURATION`, con `tcpFallbackActive: true` | Con Surfshark activo no recibía respuesta UDP de los roots, caía a relay TCP y no llegaba a descubrir el camino directo al hub por la LAN (el UDP entre ambos sí pasaba) | Con una pista `try` hacia la IP fija del hub en el `local.conf` del cliente funciona. Al final el PC no usa la overlay: va por la LAN |
 | 2026-10-11 | El disco de la VM salió `raw` aunque el código decía `qcow2`, con diff perpetuo en el plan | El provider bpg ignora `file_format` en un clone | Declarar `raw`. En almacenamiento de directorio, raw no admite snapshots: la protección es el backup diario |
 | 2026-08-28 | El patch de `KubeletConfiguration` se ignoraba sin error | `nodeRegistration.patches` es de `v1beta3`; en `v1beta4` va a nivel raíz. kubeadm sólo emite un warning | Mover `patches:` a la raíz de `InitConfiguration` y comprobar el `--dry-run` |
 | 2026-08-28 | CoreDNS en `ContainerCreating`: `failed to find plugin "loopback" in path [/usr/lib/cni]` | containerd de Debian usa `bin_dir=/usr/lib/cni` (vacío); Cilium instala en `/opt/cni/bin` | `bin_dir = "/opt/cni/bin"` en `/etc/containerd/config.toml` + `systemctl restart containerd` |

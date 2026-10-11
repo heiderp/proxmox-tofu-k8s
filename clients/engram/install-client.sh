@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # Cliente del hub de engram (PC, laptop). Dos fases:
 #
-#   ./install-client.sh prepare <client-id>
+#   ./install-client.sh prepare <client-id> <lan|zt>
 #       Config, CA, token, llave de grants, scripts y units. No toca el binario
 #       de engram ni el DB: se puede ejecutar con Claude abierto.
+#       lan: el cliente vive en casa (PC) y va a https://<IP LAN del hub>.
+#       zt:  el cliente viaja (laptop) y va por ZeroTier a https://<IP overlay>.
 #
 #   ./install-client.sh migrate
 #       Con Claude Code CERRADO. Backup del DB, instala engram v3 (lo que migra
 #       el esquema), normaliza los datos legacy, activa el autosync y enrola.
 #
-# Requisitos: el cliente unido a la red ZeroTier del hub y autorizado
-# (zerotier_members en ansible/group_vars/engram.yml), y su pubkey de grants en
-# engram_grant_keys. `prepare` imprime lo que falte.
+# Requisitos: su pubkey de grants en engram_grant_keys y, en modo zt, el cliente
+# unido a la red ZeroTier del hub y autorizado (zerotier_members en
+# ansible/group_vars/engram.yml). `prepare` imprime lo que falte.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -39,8 +41,9 @@ hub_ssh() {
 }
 
 prepare() {
-  local id="${1:-}"
-  [ -n "$id" ] || die "uso: $0 prepare <client-id>   (p. ej. pc-ph, laptop-ph)"
+  local id="${1:-}" mode="${2:-}"
+  [ -n "$id" ] && [[ "$mode" =~ ^(lan|zt)$ ]] \
+    || die "uso: $0 prepare <client-id> <lan|zt>   (p. ej. pc-ph lan, laptop-ph zt)"
   [ "$(uname -sm)" = "Linux x86_64" ] || die "solo hay checksum fijado para linux_amd64"
 
   # 1. Binario de la versión fijada, verificado. Fuera del PATH hasta migrate.
@@ -64,6 +67,9 @@ prepare() {
   fi
   chmod 600 "$conf"
   [ "$(cfg ENGRAM_CLIENT_ID)" = "$id" ] || die "$conf ya existe con otro ENGRAM_CLIENT_ID"
+  local hub_ip
+  if [ "$mode" = lan ]; then hub_ip="$(cfg ENGRAM_HUB_LAN)"; else hub_ip="$(cfg ENGRAM_HUB_ZT)"; fi
+  sed -i "s|^ENGRAM_CLOUD_SERVER=.*|ENGRAM_CLOUD_SERVER=https://$hub_ip|" "$conf"
 
   # 3. CA del hub, sumada a la del sistema solo para el proceso engram.
   local ca="$conf_dir/hub-root.crt"
@@ -102,9 +108,19 @@ prepare() {
   echo "== Falta en ansible/group_vars/engram.yml (y re-ejecutar el playbook) =="
   echo "engram_grant_keys:"
   echo "  - \"$(cat "$key.pub")\""
-  if command -v zerotier-cli >/dev/null; then
+  if [ "$mode" = lan ]; then
+    : # Sin overlay: el hub acepta el 443 desde la LAN.
+  elif command -v zerotier-cli >/dev/null; then
     echo "zerotier_members:"
     echo "  $id: { id: \"$(sudo zerotier-cli info | awk '{print $3}')\", authorized: true }"
+    echo
+    echo "== Opcional: pista de camino directo cuando esté en casa (root) =="
+    echo "Con una VPN que se lleva la ruta por defecto (Surfshark/WireGuard), ZeroTier"
+    echo "cae a relay TCP y no descubre el hub aunque esté en la misma LAN (visto en"
+    echo "el PC el 2026-10-11). Fuera de casa la pista no responde y no estorba."
+    echo "  sudo install -m 0644 $here/zerotier-local.conf /var/lib/zerotier-one/local.conf"
+    echo "  sudo systemctl restart zerotier-one"
+    echo "(si ya existe un local.conf, fusiona la clave \"virtual\" a mano)"
   else
     echo "zerotier-one no está instalado: instálalo y únete con"
     echo "  sudo zerotier-cli join <network id del resumen del playbook>"

@@ -19,8 +19,10 @@ zerotier_pool_end: "10.254.54.199"
 # (`zerotier-cli info` en cada cliente). Autorizar un dispositivo nuevo es
 # añadir una línea aquí y re-ejecutar el playbook. Borrar la línea no lo
 # desautoriza: para eso, `authorized: false` explícito.
-zerotier_members: {}
-#  pc-ph:     { id: "0123456789", authorized: true }
+zerotier_members:
+  # El PC vive en la LAN y llega al hub por https://192.168.1.54, sin overlay.
+  # Desautorizado explícitamente: borrar la línea no lo sacaría de la red.
+  pc-ph: { id: "e49513194a", authorized: false }
 #  laptop-ph: { id: "abcdef0123", authorized: true }
 
 # --- Engram Cloud ---

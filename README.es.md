@@ -124,9 +124,10 @@ de código. Así el PC de trabajo y una laptop comparten la misma memoria, desde
 
 - **Engram Cloud** autoalojado sobre Postgres. Cada cliente conserva su SQLite como fuente
   autoritativa y sincroniza por autosync: con el host apagado se sigue trabajando en local.
-- **ZeroTier con controller propio** dentro de la VM, sin cuentas externas. Solo la VM y los
-  clientes están en la red, y las flow rules dejan pasar el 443 y el 22 hacia el hub y nada más.
-- **Caddy** con su CA interna emite el certificado para la IP de la overlay.
+- **ZeroTier con controller propio** dentro de la VM, sin cuentas externas, para la laptop
+  cuando está fuera; el PC, que nunca sale de casa, va por la LAN. Solo la VM y la laptop están
+  en la red, y las flow rules dejan pasar el 443 y el 22 hacia el hub y nada más.
+- **Caddy** con su CA interna emite los certificados para la IP de la overlay y la de la LAN.
 - Un token por máquina, revocable, y grants por SSH con comando forzado.
 - State de OpenTofu propio (`infra/engram/`): reconstruir el cluster no toca la memoria. La
   reconstrucción con restore conserva la red, la CA y los tokens; está verificada.

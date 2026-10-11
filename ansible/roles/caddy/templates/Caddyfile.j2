@@ -6,10 +6,13 @@
 	auto_https disable_redirects
 }
 
-# Certificado para la IP de la overlay, firmado por la CA interna de Caddy: sin
+# Certificados para las dos IPs del hub, firmados por la CA interna de Caddy: sin
 # DNS, sin dominio y sin Let's Encrypt. Engram exige HTTPS para mandar el token
 # (`bearer token requires an HTTPS remote URL`, comprobado en el gate).
-https://{{ zerotier_hub_ip }} {
+#   - IP de la overlay: clientes que viajan (laptop), por ZeroTier.
+#   - IP de la LAN: clientes que viven en casa (PC). nftables solo acepta el
+#     443 de la LAN y de zt*.
+https://{{ zerotier_hub_ip }}, https://{{ ansible_host }} {
 	tls internal
 	reverse_proxy 127.0.0.1:{{ engram_cloud_port }}
 }

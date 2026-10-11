@@ -12,8 +12,9 @@ table inet filter {
 
 		ip protocol icmp accept
 
-		# Administración (Ansible, debian) desde la LAN.
-		ip saddr {{ lan_cidr }} tcp dport 22 accept
+		# Desde la LAN: administración (Ansible, debian) y Engram Cloud para los
+		# clientes que viven en casa (el PC), sin pasar por la overlay.
+		ip saddr {{ lan_cidr }} tcp dport { 22, 443 } accept
 
 		# Por la overlay: SSH (solo engram-grant, lo filtra sshd) y Engram Cloud.
 		iifname "zt*" tcp dport { 22, 443 } accept
