@@ -1,0 +1,43 @@
+#!/bin/sh
+# Enrola en el hub los proyectos locales que aún no lo estén.
+#
+# El sync es por proyecto y el servidor no admite grant comodín, así que un
+# proyecto nuevo necesita dos cosas:
+#   1. grant en el servidor: `ssh engram-grant@hub <proyecto>` (llave con comando
+#      forzado: no puede hacer otra cosa)
+#   2. enroll en el cliente: `engram cloud enroll <proyecto>`
+# Si el hub no responde, no pasa nada: la memoria sigue en local y el timer lo
+# reintenta.
+set -eu
+
+: "${ENGRAM_DATA_DIR:?falta config.env}"
+db="$ENGRAM_DATA_DIR/engram.db"
+key="$HOME/.ssh/engram-grant_${ENGRAM_CLIENT_ID}"
+
+# Solo proyectos con observaciones: las sesiones registran cualquier directorio
+# en el que se abrió Claude (Code, dev...), y esos no son memoria.
+projects=$(sqlite3 "$db" \
+  "SELECT DISTINCT project FROM observations
+   WHERE deleted_at IS NULL AND ifnull(project, '') <> ''
+     AND project NOT IN (SELECT project FROM sync_enrolled_projects)")
+
+[ -n "$projects" ] || exit 0
+
+for p in $projects; do
+  granted=0
+  for host in $ENGRAM_HUB_LAN $ENGRAM_HUB_ZT; do
+    # Host keys desechables, como en ansible.cfg: cada destroy+apply las
+    # regenera. La llave solo puede pedir un grant.
+    if ssh -i "$key" -o BatchMode=yes -o ConnectTimeout=4 \
+         -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+         "engram-grant@$host" "$p"; then
+      granted=1
+      break
+    fi
+  done
+  if [ "$granted" = 1 ]; then
+    "$HOME/.local/bin/engram" cloud enroll "$p"
+  else
+    echo "hub no accesible: $p queda pendiente" >&2
+  fi
+done

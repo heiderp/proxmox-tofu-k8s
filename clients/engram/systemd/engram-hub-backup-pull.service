@@ -1,0 +1,7 @@
+[Unit]
+Description=Traer al PC el último backup del hub de engram
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/engram-hub/config.env
+ExecStart=%h/.local/bin/engram-hub-backup-pull

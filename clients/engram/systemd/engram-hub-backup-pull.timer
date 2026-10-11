@@ -1,0 +1,10 @@
+[Unit]
+Description=Copia diaria fuera de la VM del backup del hub de engram
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=30min
+
+[Install]
+WantedBy=timers.target

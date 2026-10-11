@@ -59,8 +59,9 @@ engram_projects:
 
 # Llaves públicas que pueden pedir grants por SSH (usuario engram-grant, con
 # comando forzado). Una por cliente, generadas por clients/engram/install-client.sh.
-engram_grant_keys: []
-#  - "ssh-ed25519 AAAA... engram-grant pc-ph"
+engram_grant_keys:
+  - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKDKc3exhpjXFgpIyyTiu7e1sW+wACLO6jZmTdY3KSev engram-grant pc-ph"
+#  - "ssh-ed25519 AAAA... engram-grant laptop-ph"
 
 # --- Backups ---
 

@@ -1,0 +1,33 @@
+#!/bin/sh
+# Trae al cliente el último backup del hub (solo desde la LAN: el usuario de
+# administración no entra por ZeroTier). Si el host está apagado, sale sin error:
+# el timer es Persistent y lo intenta en la siguiente ocasión.
+set -eu
+
+: "${ENGRAM_HUB_LAN:?falta config.env}"
+dest="$HOME/Backups/engram-hub"
+keep=7
+ssh_hub() {
+  ssh -i "$HOME/.ssh/homelab" -o BatchMode=yes -o ConnectTimeout=4 \
+      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+      "debian@$ENGRAM_HUB_LAN" "$@"
+}
+# Host keys desechables por la misma razón que en ansible.cfg: cada
+# destroy+apply las regenera.
+
+latest=$(ssh_hub 'sudo ls -1t /var/backups/engram/ 2>/dev/null | head -1') || {
+  echo "hub no accesible desde la LAN; se reintenta en la próxima pasada" >&2
+  exit 0
+}
+[ -n "$latest" ] || { echo "el hub aún no tiene backups" >&2; exit 0; }
+
+mkdir -p "$dest"
+chmod 700 "$dest"
+[ -f "$dest/$latest" ] && exit 0
+
+umask 077
+ssh_hub "sudo cat /var/backups/engram/$latest" > "$dest/$latest.part"
+gzip -t "$dest/$latest.part"
+mv "$dest/$latest.part" "$dest/$latest"
+ls -1t "$dest"/engram-hub-*.tar.gz | tail -n +"$((keep + 1))" | xargs -r rm --
+echo "backup traído: $dest/$latest"

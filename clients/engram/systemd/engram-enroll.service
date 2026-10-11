@@ -1,0 +1,7 @@
+[Unit]
+Description=Pedir grant y enrolar en el hub los proyectos nuevos de engram
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/engram-hub/config.env
+ExecStart=%h/.local/bin/engram-enroll

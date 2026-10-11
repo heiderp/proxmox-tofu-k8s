@@ -1,0 +1,18 @@
+# Un único engram serve por máquina, con el autosync con el hub.
+#
+# El autosync va aquí y no en `engram mcp`: Claude Code lanza un mcp por sesión
+# abierta, y varios bucles de sync sobre el mismo SQLite compiten entre sí. Los
+# mcp escriben en el SQLite; este proceso sube y baja. Los hooks del plugin
+# encuentran este serve en el 7437 y no arrancan otro.
+[Unit]
+Description=engram serve con autosync al hub
+After=network-online.target
+
+[Service]
+EnvironmentFile=%h/.config/engram-hub/config.env
+ExecStart=%h/.local/bin/engram serve
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
