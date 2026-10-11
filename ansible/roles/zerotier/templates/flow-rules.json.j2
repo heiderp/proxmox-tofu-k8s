@@ -1,0 +1,35 @@
+[
+  {"type": "MATCH_ETHERTYPE", "not": true, "or": false, "etherType": 2048},
+  {"type": "MATCH_ETHERTYPE", "not": true, "or": false, "etherType": 2054},
+  {"type": "ACTION_DROP"},
+
+  {"type": "MATCH_ETHERTYPE", "not": false, "or": false, "etherType": 2054},
+  {"type": "ACTION_ACCEPT"},
+
+  {"type": "MATCH_IP_PROTOCOL", "not": false, "or": false, "ipProtocol": 1},
+  {"type": "MATCH_IPV4_DEST", "not": false, "or": false, "ip": "{{ zerotier_hub_ip }}/32"},
+  {"type": "ACTION_ACCEPT"},
+  {"type": "MATCH_IP_PROTOCOL", "not": false, "or": false, "ipProtocol": 1},
+  {"type": "MATCH_IPV4_SOURCE", "not": false, "or": false, "ip": "{{ zerotier_hub_ip }}/32"},
+  {"type": "ACTION_ACCEPT"},
+
+  {"type": "MATCH_IP_PROTOCOL", "not": false, "or": false, "ipProtocol": 6},
+  {"type": "MATCH_IPV4_DEST", "not": false, "or": false, "ip": "{{ zerotier_hub_ip }}/32"},
+  {"type": "MATCH_IP_DEST_PORT_RANGE", "not": false, "or": false, "start": 443, "end": 443},
+  {"type": "ACTION_ACCEPT"},
+  {"type": "MATCH_IP_PROTOCOL", "not": false, "or": false, "ipProtocol": 6},
+  {"type": "MATCH_IPV4_SOURCE", "not": false, "or": false, "ip": "{{ zerotier_hub_ip }}/32"},
+  {"type": "MATCH_IP_SOURCE_PORT_RANGE", "not": false, "or": false, "start": 443, "end": 443},
+  {"type": "ACTION_ACCEPT"},
+
+  {"type": "MATCH_IP_PROTOCOL", "not": false, "or": false, "ipProtocol": 6},
+  {"type": "MATCH_IPV4_DEST", "not": false, "or": false, "ip": "{{ zerotier_hub_ip }}/32"},
+  {"type": "MATCH_IP_DEST_PORT_RANGE", "not": false, "or": false, "start": 22, "end": 22},
+  {"type": "ACTION_ACCEPT"},
+  {"type": "MATCH_IP_PROTOCOL", "not": false, "or": false, "ipProtocol": 6},
+  {"type": "MATCH_IPV4_SOURCE", "not": false, "or": false, "ip": "{{ zerotier_hub_ip }}/32"},
+  {"type": "MATCH_IP_SOURCE_PORT_RANGE", "not": false, "or": false, "start": 22, "end": 22},
+  {"type": "ACTION_ACCEPT"},
+
+  {"type": "ACTION_DROP"}
+]

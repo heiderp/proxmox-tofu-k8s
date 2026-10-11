@@ -1,0 +1,276 @@
+---
+# Engram Cloud: binario fijado, Postgres local, secretos generados en la VM,
+# admin gestionado, usuario `clients` con un token por máquina y la puerta SSH
+# para conceder proyectos nuevos.
+
+- name: Directorios
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /var/lib/engram, owner: engram, group: engram, mode: "0750" }
+    - { path: /etc/engram, owner: root, group: engram, mode: "0750" }
+    - { path: /etc/engram/pickup, owner: root, group: root, mode: "0700" }
+    - { path: "/opt/engram/{{ engram_version }}", owner: root, group: root, mode: "0755" }
+
+# --- Binario ---
+
+- name: Descargar la release fijada (verificada por checksum)
+  ansible.builtin.get_url:
+    url: "https://github.com/Gentleman-Programming/engram/releases/download/v{{ engram_version }}/engram_{{ engram_version }}_linux_amd64.tar.gz"
+    dest: "/opt/engram/engram_{{ engram_version }}_linux_amd64.tar.gz"
+    checksum: "sha256:{{ engram_sha256 }}"
+    mode: "0644"
+
+- name: Extraer el binario
+  ansible.builtin.unarchive:
+    src: "/opt/engram/engram_{{ engram_version }}_linux_amd64.tar.gz"
+    dest: "/opt/engram/{{ engram_version }}"
+    remote_src: true
+    include: [engram]
+    creates: "/opt/engram/{{ engram_version }}/engram"
+
+- name: Versión activa
+  ansible.builtin.file:
+    src: "/opt/engram/{{ engram_version }}/engram"
+    dest: /usr/local/bin/engram
+    state: link
+  notify: Reiniciar engram-cloud
+  # Un directorio por versión y un symlink: cambiar engram_version y re-ejecutar
+  # es la actualización; volver al symlink anterior, el rollback.
+
+# --- Secretos ---
+
+- name: Generar los secretos del servidor la primera vez
+  ansible.builtin.shell: |
+    set -eu
+    umask 027
+    {
+      echo "ENGRAM_JWT_SECRET=$(openssl rand -hex 32)"
+      echo "ENGRAM_CLOUD_TOKEN_PEPPER=$(openssl rand -hex 32)"
+      echo "ENGRAM_CLOUD_TOKEN=$(openssl rand -hex 32)"
+    } > /etc/engram/secrets.env
+    chgrp engram /etc/engram/secrets.env
+  args:
+    creates: /etc/engram/secrets.env
+  # Se generan aquí y no salen de la VM más que dentro del backup (0600 root).
+  # Si el archivo ya existe (pasada normal o restore) no se toca: cambiar el
+  # pepper invalida todos los tokens emitidos.
+  #
+  # ENGRAM_CLOUD_TOKEN es el token "legacy": cloud serve no arranca sin él en
+  # modo autenticado. Con ALLOWED_PROJECTS=* sería un token maestro, así que no
+  # se entrega a ningún cliente; los clientes usan tokens gestionados.
+
+- name: Unit de systemd
+  ansible.builtin.template:
+    src: engram-cloud.service.j2
+    dest: /etc/systemd/system/engram-cloud.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reiniciar engram-cloud
+
+- name: engram-cloud activo al boot
+  ansible.builtin.systemd_service:
+    name: engram-cloud
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Aplicar reinicios pendientes
+  ansible.builtin.meta: flush_handlers
+
+- name: Esperar a /health
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ engram_cloud_port }}/health"
+  register: cloud_health
+  until: cloud_health.status == 200
+  retries: 15
+  delay: 2
+
+# --- Admin gestionado ---
+
+- name: ¿Hay ya token de admin?
+  ansible.builtin.stat:
+    path: /etc/engram/admin.tok
+  register: admin_tok
+
+- name: Crear el admin gestionado y su token
+  ansible.builtin.shell: |
+    set -eu
+    set -a; . /etc/engram/secrets.env; set +a
+    export ENGRAM_DATABASE_URL='{{ engram_database_url }}'
+    runuser -u engram -- env ENGRAM_DATABASE_URL="$ENGRAM_DATABASE_URL" \
+      ENGRAM_CLOUD_TOKEN_PEPPER="$ENGRAM_CLOUD_TOKEN_PEPPER" \
+      ENGRAM_JWT_SECRET="$ENGRAM_JWT_SECRET" \
+      ENGRAM_DATA_DIR=/var/lib/engram \
+      /usr/local/bin/engram cloud bootstrap admin --username admin --issue-token hub-admin
+  register: bootstrap
+  when: not admin_tok.stat.exists
+  no_log: true
+  # Sin --grant-project a propósito: el gate mostró que un grant inválido hace
+  # fallar el bootstrap DESPUÉS de crear el admin, dejándolo sin token. El admin
+  # no necesita grants (administra); los grants van al usuario clients.
+
+- name: Guardar el token de admin (solo root)
+  ansible.builtin.copy:
+    dest: /etc/engram/admin.tok
+    content: "{{ bootstrap.stdout | regex_search('egc_[A-Za-z0-9_-]{40,}') }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when: not admin_tok.stat.exists
+  no_log: true
+
+- name: Leer el token de admin
+  ansible.builtin.slurp:
+    src: /etc/engram/admin.tok
+  register: admin_tok_content
+  no_log: true
+
+- name: Validar el token de admin
+  ansible.builtin.assert:
+    that: (admin_tok_content.content | b64decode) is match('egc_')
+    fail_msg: >-
+      /etc/engram/admin.tok está vacío o no es un token. Si el bootstrap falló
+      a medias, recuperar con:
+      sudo -u engram engram cloud bootstrap recover-token --name hub-admin
+      (cargando /etc/engram/secrets.env) y escribir el token en admin.tok.
+  no_log: true
+
+- name: Cabecera de la API de admin
+  ansible.builtin.set_fact:
+    engram_admin_headers:
+      Authorization: "Bearer {{ admin_tok_content.content | b64decode | trim }}"
+  no_log: true
+
+# --- Usuario clients, grants y tokens por máquina ---
+
+- name: Usuarios gestionados
+  ansible.builtin.uri:
+    url: "{{ engram_api }}/admin/users"
+    headers: "{{ engram_admin_headers }}"
+  register: cloud_users
+
+- name: Crear el usuario de los clientes (rol member)
+  ansible.builtin.uri:
+    url: "{{ engram_api }}/admin/users"
+    method: POST
+    headers: "{{ engram_admin_headers }}"
+    body_format: json
+    body: { username: "{{ engram_clients_user }}", role: member }
+    status_code: [200, 201]
+  register: clients_created
+  when: cloud_users.json | selectattr('username', 'equalto', engram_clients_user) | list | length == 0
+  changed_when: true
+
+- name: Fijar el principal de clients
+  ansible.builtin.set_fact:
+    clients_id: >-
+      {{ clients_created.json.principal_id if clients_created is not skipped
+         else (cloud_users.json | selectattr('username', 'equalto', engram_clients_user) | first).principal_id }}
+
+- name: Guardar el principal para engram-grant
+  ansible.builtin.copy:
+    dest: /etc/engram/clients.id
+    content: "{{ clients_id }}\n"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Grants actuales
+  ansible.builtin.uri:
+    url: "{{ engram_api }}/admin/users/{{ clients_id }}/grants"
+    headers: "{{ engram_admin_headers }}"
+  register: cloud_grants
+
+- name: Conceder los proyectos declarados
+  ansible.builtin.uri:
+    url: "{{ engram_api }}/admin/users/{{ clients_id }}/grants"
+    method: POST
+    headers: "{{ engram_admin_headers }}"
+    body_format: json
+    body: { project: "{{ item }}" }
+    status_code: [200, 201]
+  loop: "{{ engram_projects | difference(cloud_grants.json | map(attribute='project') | list) }}"
+  changed_when: true
+
+- name: Tokens actuales de clients
+  ansible.builtin.uri:
+    url: "{{ engram_api }}/admin/users/{{ clients_id }}/tokens"
+    headers: "{{ engram_admin_headers }}"
+  register: cloud_tokens
+
+- name: Emitir los tokens que falten
+  ansible.builtin.uri:
+    url: "{{ engram_api }}/admin/users/{{ clients_id }}/tokens"
+    method: POST
+    headers: "{{ engram_admin_headers }}"
+    body_format: json
+    body: { name: "{{ item }}" }
+    status_code: [200, 201]
+  loop: >-
+    {{ engram_client_tokens | difference(
+         cloud_tokens.json | rejectattr('revoked_at', 'defined') | map(attribute='name') | list) }}
+  register: issued_tokens
+  changed_when: true
+  no_log: true
+
+- name: Dejar cada token nuevo para recoger (una vez)
+  ansible.builtin.copy:
+    dest: "/etc/engram/pickup/{{ item.item }}.tok"
+    content: "{{ item.json.raw_token }}\n"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ issued_tokens.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  no_log: true
+  # El servidor solo devuelve el token en claro al emitirlo. Se queda aquí hasta
+  # que install-client.sh lo recoge (y lo borra) por SSH desde la LAN.
+
+# --- Puerta SSH para conceder proyectos nuevos ---
+
+- name: Usuario engram-grant
+  ansible.builtin.user:
+    name: engram-grant
+    system: true
+    home: /var/lib/engram-grant
+    shell: /bin/sh
+  # Shell real porque sshd ejecuta el comando forzado a través de ella; la
+  # llave no permite nada más (restrict + command=).
+
+- name: Scripts de la puerta
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - { src: engram-grant-gate, dest: /usr/local/bin/engram-grant-gate }
+    - { src: engram-grant, dest: /usr/local/sbin/engram-grant }
+
+- name: engram-grant solo puede ejecutar el script de grant como root
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/engram-grant
+    content: "engram-grant ALL=(root) NOPASSWD: /usr/local/sbin/engram-grant\n"
+    owner: root
+    group: root
+    mode: "0440"
+    validate: visudo -cf %s
+  # El token de admin sigue siendo root 0600: engram-grant no lo lee, solo puede
+  # pedir a un script de root que conceda un proyecto, y el script valida el
+  # nombre otra vez.
+
+- name: Llaves autorizadas, con comando forzado
+  ansible.posix.authorized_key:
+    user: engram-grant
+    key: "{{ engram_grant_keys | join('\n') }}"
+    key_options: 'restrict,command="/usr/local/bin/engram-grant-gate"'
+    exclusive: true
+  when: engram_grant_keys | length > 0

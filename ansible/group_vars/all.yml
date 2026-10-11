@@ -29,3 +29,20 @@ control_plane_endpoint: "192.168.1.51:6443"
 # Kubeconfig en la máquina de trabajo. Aparte de ~/.kube/config para no pisar
 # otros contextos.
 local_kubeconfig: "~/.kube/config-homelab"
+
+# --- Hub de memoria (VM engram, playbooks/engram.yml) ---
+
+# Release exacta de Gentleman-Programming/engram. El checksum es el de
+# checksums.txt de esa release para linux_amd64: si no coincide, get_url falla.
+# PC y laptop deben correr la misma versión que el servidor.
+engram_version: "3.3.2"
+engram_sha256: "8694d3817b63c5fc5607b5919e88aa929bffa0bafda330513364e10c8ab61445"
+
+# Del repo oficial de ZeroTier, que conserva versiones anteriores: se puede fijar
+# la exacta.
+zerotier_version: "1.16.2"
+
+# Postgres y Caddy salen de Debian 13. Se fija la major (el nombre del paquete):
+# Debian solo publica la última revisión de seguridad, así que una versión exacta
+# desaparece del mirror con el siguiente parche y la reconstrucción falla.
+postgresql_major: "17"

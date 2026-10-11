@@ -1,0 +1,37 @@
+---
+# Hub de memoria: Engram Cloud + Postgres + Caddy + ZeroTier en la VM 104.
+#
+#   cd ansible/ && ansible-playbook playbooks/engram.yml
+#
+# Reconstrucción conservando memoria, red y CA:
+#   cd infra/engram/ && tofu destroy && tofu apply
+#   cd ansible/ && ansible-playbook playbooks/engram.yml -e engram_restore_archive=<backup.tar.gz>
+#
+# Sin engram_restore_archive sale un hub vacío: red ZT nueva, CA nueva y tokens
+# nuevos. Todos los clientes tendrían que reinstalarse.
+
+- name: Hub de engram
+  hosts: engram
+  gather_facts: true
+  roles:
+    - engram_base
+    - role: engram_restore
+      when: engram_restore_archive is defined
+    - zerotier
+    - engram_cloud
+    - caddy
+    - engram_backup
+
+  post_tasks:
+    - name: Tokens pendientes de recoger
+      ansible.builtin.find:
+        paths: /etc/engram/pickup
+        patterns: "*.tok"
+      register: pickup
+
+    - name: Resumen
+      ansible.builtin.debug:
+        msg:
+          - "Hub: https://{{ zerotier_hub_ip }} (CA en ansible/artifacts/engram/hub-root.crt)"
+          - "Red ZeroTier: {{ zt_network_id }}"
+          - "Tokens por recoger: {{ pickup.files | map(attribute='path') | map('basename') | list }}"

@@ -1,0 +1,162 @@
+---
+# Controller ZeroTier propio, dentro de la misma VM que sirve.
+#
+# Sin cuenta en my.zerotier.com: zerotier-one trae un controller integrado que
+# se maneja por su API local (127.0.0.1:9993). Si la VM está apagada no se
+# pueden unir clientes nuevos, pero tampoco habría engram al que llegar: el
+# controller no resta disponibilidad.
+#
+# Estado crítico: /var/lib/zerotier-one (identidad del nodo = identidad del
+# controller, y la base de la red). Si se pierde, la red hay que rehacerla y
+# todos los clientes re-unirse. Va en el backup diario y engram_restore lo
+# repone antes de llegar aquí.
+
+- name: zerotier-one activo al boot
+  ansible.builtin.service:
+    name: zerotier-one
+    state: started
+    enabled: true
+
+- name: Esperar al token de la API local
+  ansible.builtin.wait_for:
+    path: /var/lib/zerotier-one/authtoken.secret
+    timeout: 30
+
+- name: Leer el token de la API local
+  ansible.builtin.slurp:
+    src: /var/lib/zerotier-one/authtoken.secret
+  register: zt_authtoken
+  no_log: true
+
+- name: Identidad del nodo
+  ansible.builtin.command: zerotier-cli -j info
+  register: zt_info
+  changed_when: false
+
+- name: Fijar cabecera y node ID
+  ansible.builtin.set_fact:
+    zt_node_id: "{{ (zt_info.stdout | from_json).address }}"
+    zt_headers:
+      X-ZT1-Auth: "{{ zt_authtoken.content | b64decode | trim }}"
+  no_log: true
+
+- name: Redes del controller
+  ansible.builtin.uri:
+    url: http://127.0.0.1:9993/controller/network
+    headers: "{{ zt_headers }}"
+  register: zt_networks
+
+- name: Crear la red si el controller no tiene ninguna
+  ansible.builtin.uri:
+    # <nodeid>______ = el controller elige los 6 últimos dígitos del network ID.
+    url: "http://127.0.0.1:9993/controller/network/{{ zt_node_id }}______"
+    method: POST
+    headers: "{{ zt_headers }}"
+    body_format: json
+    body: {}
+  register: zt_created
+  when: zt_networks.json | length == 0
+  changed_when: true
+
+- name: Fijar el network ID
+  ansible.builtin.set_fact:
+    zt_network_id: "{{ zt_created.json.id if zt_created is not skipped else zt_networks.json[0] }}"
+
+- name: Un controller, una red
+  ansible.builtin.assert:
+    that: zt_networks.json | length <= 1
+    fail_msg: "El controller tiene {{ zt_networks.json | length }} redes; se esperaba una."
+
+- name: Configuración actual de la red
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:9993/controller/network/{{ zt_network_id }}"
+    headers: "{{ zt_headers }}"
+  register: zt_current
+
+- name: Configuración deseada
+  # Flow rules (templates/flow-rules.json.j2), en orden; la primera acción que
+  # casa decide:
+  #   1. todo lo que no sea IPv4 ni ARP → drop (fuera IPv6 y demás)
+  #   2. ARP → accept
+  #   3. ICMP desde/hacia el hub → accept (diagnóstico)
+  #   4. TCP 443 y 22 hacia el hub, y sus respuestas → accept
+  #   5. resto → drop. Cliente↔cliente no se ven: la overlay solo sirve al hub.
+  # Las rules son stateless y se evalúan en emisor y receptor; por eso cada
+  # puerto lleva su regla de vuelta (sport). nftables en la VM es la 2ª capa.
+  ansible.builtin.set_fact:
+    zt_desired:
+      name: engram-hub
+      private: true
+      enableBroadcast: true
+      v4AssignMode: { zt: true }
+      v6AssignMode: { zt: false, "6plane": false, rfc4193: false }
+      ipAssignmentPools:
+        - { ipRangeStart: "{{ zerotier_pool_start }}", ipRangeEnd: "{{ zerotier_pool_end }}" }
+      routes:
+        - { target: "{{ zerotier_subnet }}", via: null }
+      rules: "{{ lookup('template', 'flow-rules.json.j2') | from_json }}"
+
+- name: Aplicar configuración y flow rules
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:9993/controller/network/{{ zt_network_id }}"
+    method: POST
+    headers: "{{ zt_headers }}"
+    body_format: json
+    body: "{{ zt_desired }}"
+  when: >-
+    zt_current.json.name != zt_desired.name or
+    zt_current.json.private != zt_desired.private or
+    zt_current.json.ipAssignmentPools != zt_desired.ipAssignmentPools or
+    zt_current.json.routes != zt_desired.routes or
+    zt_current.json.rules != zt_desired.rules
+  changed_when: true
+
+- name: Redes a las que está unido el propio nodo
+  ansible.builtin.command: zerotier-cli -j listnetworks
+  register: zt_joined
+  changed_when: false
+
+- name: Unir la VM a su propia red
+  ansible.builtin.command: "zerotier-cli join {{ zt_network_id }}"
+  when: zt_network_id not in (zt_joined.stdout | from_json | map(attribute='nwid') | list)
+  changed_when: true
+
+- name: Autorizar el hub con IP fija
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:9993/controller/network/{{ zt_network_id }}/member/{{ zt_node_id }}"
+    method: POST
+    headers: "{{ zt_headers }}"
+    body_format: json
+    body:
+      name: engram-hub
+      authorized: true
+      ipAssignments: ["{{ zerotier_hub_ip }}"]
+  changed_when: false
+  # POST idempotente: reescribe los mismos valores. changed_when false para no
+  # ensuciar cada pasada; el assert de la IP de abajo verifica el resultado.
+
+- name: Autorizar (o desautorizar) los clientes declarados
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:9993/controller/network/{{ zt_network_id }}/member/{{ item.value.id }}"
+    method: POST
+    headers: "{{ zt_headers }}"
+    body_format: json
+    body:
+      name: "{{ item.key }}"
+      authorized: "{{ item.value.authorized | default(true) }}"
+  loop: "{{ zerotier_members | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  changed_when: false
+
+- name: Esperar a que la VM tenga su IP en la overlay
+  ansible.builtin.command: ip -4 -o addr show
+  register: zt_addrs
+  until: zerotier_hub_ip in zt_addrs.stdout
+  retries: 20
+  delay: 3
+  changed_when: false
+
+- name: Network ID para los clientes
+  ansible.builtin.debug:
+    msg: "Red ZeroTier: {{ zt_network_id }} — en cada cliente: sudo zerotier-cli join {{ zt_network_id }}"

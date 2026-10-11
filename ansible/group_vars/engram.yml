@@ -1,0 +1,68 @@
+# Hub de memoria: Engram Cloud + Postgres + Caddy + ZeroTier en la VM 104.
+# Nada de aquí es secreto. Los secretos (JWT, pepper, token de admin) se
+# generan en la VM la primera vez y nunca salen de /etc/engram.
+
+# LAN de casa: única procedencia aceptada para administrar la VM por SSH.
+lan_cidr: "192.168.1.0/24"
+
+# --- ZeroTier (controller propio en la VM, sin cuenta externa) ---
+
+# Red privada de la overlay. La VM tiene IP fija y los clientes reciben una del
+# pool. Rango poco común para no chocar con otras redes ZT a las que se una un
+# cliente.
+zerotier_subnet: "10.254.54.0/24"
+zerotier_hub_ip: "10.254.54.1"
+zerotier_pool_start: "10.254.54.100"
+zerotier_pool_end: "10.254.54.199"
+
+# Miembros autorizados: nombre → node ID de 10 caracteres hexadecimales
+# (`zerotier-cli info` en cada cliente). Autorizar un dispositivo nuevo es
+# añadir una línea aquí y re-ejecutar el playbook. Borrar la línea no lo
+# desautoriza: para eso, `authorized: false` explícito.
+zerotier_members: {}
+#  pc-ph:     { id: "0123456789", authorized: true }
+#  laptop-ph: { id: "abcdef0123", authorized: true }
+
+# --- Engram Cloud ---
+
+# Loopback: solo Caddy habla con él.
+engram_cloud_port: 18080
+
+# Usuario gestionado de los clientes, con rol member: sin poder de
+# administración. Cada máquina tiene su propio token bajo este usuario, y
+# revocar uno no afecta a los demás.
+engram_clients_user: "clients"
+engram_client_tokens:
+  - pc-ph
+  - laptop-ph
+
+# Proyectos con grant para los clientes. No existe grant comodín (`*` →
+# `project is required`, comprobado en el gate). Los proyectos nuevos los
+# concede engram-enroll por SSH al vuelo; esta lista es el mínimo declarado, y
+# re-ejecutar el playbook no revoca los que se añadieron por SSH.
+engram_projects:
+  - autoupload-module
+  - claude-chat
+  - facturas-bot
+  - floci
+  - knowledge-warehouse
+  - kong-pbac-demo
+  - lan-kvm
+  - pass-team-setup
+  - personal
+  - pipeline_deployment_zero_downtime
+  - postman
+  - proxmox-tofu-k8s
+  - saa_instructor
+  - surf-cli
+  - vaultwarden-stack
+
+# Llaves públicas que pueden pedir grants por SSH (usuario engram-grant, con
+# comando forzado). Una por cliente, generadas por clients/engram/install-client.sh.
+engram_grant_keys: []
+#  - "ssh-ed25519 AAAA... engram-grant pc-ph"
+
+# --- Backups ---
+
+engram_backup_dir: /var/backups/engram
+engram_backup_keep: 7

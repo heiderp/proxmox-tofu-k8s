@@ -1,0 +1,81 @@
+---
+# Restaura un backup de engram-backup sobre una VM recién creada.
+#
+#   ansible-playbook playbooks/engram.yml -e engram_restore_archive=/ruta/engram-hub-XXXX.tar.gz
+#
+# Corre entre engram_base (paquetes, usuario engram, base vacía) y el resto de
+# roles. Así la identidad ZT, la CA de Caddy y los secretos restaurados
+# existen ANTES de que zerotier, caddy y engram_cloud configuren nada encima:
+# los clientes siguen confiando en la misma CA y están en la misma red.
+#
+# Solo actúa sobre una VM sin admin.tok, es decir, sin datos propios. Sobre un
+# hub en uso se niega: pisaría memoria más reciente que el backup.
+
+- name: ¿El hub ya tiene datos?
+  ansible.builtin.stat:
+    path: /etc/engram/admin.tok
+  register: restore_admin_tok
+
+- name: No restaurar sobre un hub en uso
+  ansible.builtin.assert:
+    that: not restore_admin_tok.stat.exists
+    fail_msg: >-
+      Este hub ya tiene /etc/engram/admin.tok. El restore solo se hace sobre una
+      VM recién creada (tofu destroy + apply en infra/engram/).
+
+- name: Subir el backup
+  ansible.builtin.copy:
+    src: "{{ engram_restore_archive }}"
+    dest: /root/engram-restore.tar.gz
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Parar los servicios cuyo estado se va a reponer
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: stopped
+  loop: [zerotier-one, caddy]
+
+- name: Vaciar el estado recién generado por los paquetes
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: [/var/lib/zerotier-one, /var/lib/caddy/.local/share/caddy]
+  # zerotier-one y caddy ya arrancaron una vez al instalarse y crearon una
+  # identidad y una CA propias. Extraer encima dejaría restos mezclados.
+
+- name: Reponer identidad ZT, PKI de Caddy y secretos
+  ansible.builtin.command:
+    cmd: >-
+      tar -xzpf /root/engram-restore.tar.gz -C /
+      var/lib/zerotier-one var/lib/caddy/.local/share/caddy etc/engram
+  changed_when: true
+  # Como root, tar mapea dueños por nombre: zerotier-one, caddy y engram ya
+  # existen (engram_base), así que la propiedad queda bien aunque los UID de
+  # esta VM no coincidan con los de la original.
+
+- name: Extraer el volcado de la base
+  ansible.builtin.command:
+    cmd: tar -xzf /root/engram-restore.tar.gz -C /var/lib/postgresql engram_cloud.dump
+  changed_when: true
+  # En el home de postgres y no en /root: pg_restore corre como postgres.
+
+- name: Cargar la base
+  ansible.builtin.command:
+    cmd: pg_restore --exit-on-error --no-owner --role=engram -d engram_cloud /var/lib/postgresql/engram_cloud.dump
+  become: true
+  become_user: postgres
+  changed_when: true
+
+- name: Arrancar de nuevo zerotier-one y caddy
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: started
+  loop: [zerotier-one, caddy]
+
+- name: Limpiar
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: [/root/engram-restore.tar.gz, /var/lib/postgresql/engram_cloud.dump]

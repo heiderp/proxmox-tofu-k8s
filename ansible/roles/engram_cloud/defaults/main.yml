@@ -1,0 +1,4 @@
+---
+# Socket local + peer auth: sin contraseña (ver tasks, "Rol de Postgres").
+engram_database_url: "postgres://engram@/engram_cloud?host=/var/run/postgresql&sslmode=disable"
+engram_api: "http://127.0.0.1:{{ engram_cloud_port }}"

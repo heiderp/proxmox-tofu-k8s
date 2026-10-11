@@ -1,0 +1,22 @@
+#!/bin/sh
+# Comando forzado de las llaves de engram-grant (authorized_keys, restrict).
+# Lo único que deja hacer: pedir el grant de UN proyecto para el usuario clients.
+#
+#   ssh engram-grant@hub <proyecto>
+set -eu
+
+project="${SSH_ORIGINAL_COMMAND:-}"
+
+case "$project" in
+  "" | *[!A-Za-z0-9._-]*)
+    echo "uso: ssh engram-grant@hub <proyecto>  ([A-Za-z0-9._-], máx. 64)" >&2
+    exit 2
+    ;;
+esac
+
+if [ "${#project}" -gt 64 ]; then
+  echo "nombre de proyecto demasiado largo" >&2
+  exit 2
+fi
+
+exec sudo -n /usr/local/sbin/engram-grant "$project"

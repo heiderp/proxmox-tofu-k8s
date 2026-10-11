@@ -1,0 +1,6 @@
+---
+- name: Reiniciar engram-cloud
+  ansible.builtin.systemd_service:
+    name: engram-cloud
+    state: restarted
+    daemon_reload: true

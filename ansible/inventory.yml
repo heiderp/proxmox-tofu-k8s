@@ -1,18 +1,27 @@
 # Las IPs las fija cloud-init desde infra/main.tf (locals.nodes) y las confirma
 # `tofu output node_ips`. Si aquí y allí no coinciden, manda OpenTofu.
+# La VM de engram sale de infra/engram/ (`tofu output ip`).
 all:
   vars:
     ansible_user: debian
     ansible_ssh_private_key_file: ~/.ssh/homelab
     ansible_python_interpreter: /usr/bin/python3
   children:
-    control_plane:
+    # Los playbooks del cluster apuntan a `k8s`, nunca a `all`: con la VM de
+    # engram en el inventario, `all` le instalaría kubeadm y containerd.
+    k8s:
+      children:
+        control_plane:
+          hosts:
+            k8s-cp-1:
+              ansible_host: 192.168.1.51
+        workers:
+          hosts:
+            k8s-wk-1:
+              ansible_host: 192.168.1.52
+            k8s-wk-2:
+              ansible_host: 192.168.1.53
+    engram:
       hosts:
-        k8s-cp-1:
-          ansible_host: 192.168.1.51
-    workers:
-      hosts:
-        k8s-wk-1:
-          ansible_host: 192.168.1.52
-        k8s-wk-2:
-          ansible_host: 192.168.1.53
+        engram-vm:
+          ansible_host: 192.168.1.54

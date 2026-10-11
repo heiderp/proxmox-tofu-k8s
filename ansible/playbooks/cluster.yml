@@ -8,7 +8,7 @@
 #   cd infra/ && tofu destroy -auto-approve && tofu apply -auto-approve
 
 - name: Prerequisitos, runtime y paquetes en los tres nodos
-  hosts: all
+  hosts: k8s
   gather_facts: true
   roles:
     - common

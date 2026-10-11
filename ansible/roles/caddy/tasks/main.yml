@@ -1,0 +1,49 @@
+---
+# TLS delante de Engram Cloud con la CA interna de Caddy.
+#
+# Estado crítico: la PKI en /var/lib/caddy/.local/share/caddy/pki. Si se pierde,
+# Caddy crea una CA nueva y TODOS los clientes fallan con `x509: certificate
+# signed by unknown authority` (reproducido en el gate). Va en el backup diario
+# y engram_restore la repone antes de llegar aquí.
+
+- name: Caddyfile
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: /etc/caddy/Caddyfile
+    owner: root
+    group: root
+    mode: "0644"
+    validate: caddy validate --adapter caddyfile --config %s
+  notify: Recargar caddy
+
+- name: caddy activo al boot
+  ansible.builtin.service:
+    name: caddy
+    state: started
+    enabled: true
+
+- name: Aplicar la recarga pendiente
+  ansible.builtin.meta: flush_handlers
+
+- name: Esperar a la CA interna
+  ansible.builtin.wait_for:
+    path: "{{ caddy_root_crt }}"
+    timeout: 60
+
+- name: Engram Cloud responde por HTTPS con la CA interna
+  ansible.builtin.uri:
+    url: "https://{{ zerotier_hub_ip }}/health"
+    ca_path: "{{ caddy_root_crt }}"
+    return_content: true
+  register: hub_health
+  until: hub_health.status == 200 and hub_health.json.service == 'engram-cloud'
+  retries: 10
+  delay: 3
+
+- name: Traer la CA a la máquina de control para los clientes
+  ansible.builtin.fetch:
+    src: "{{ caddy_root_crt }}"
+    dest: "{{ playbook_dir }}/../artifacts/engram/hub-root.crt"
+    flat: true
+  # artifacts/ está en .gitignore. No por secreta (es un certificado público),
+  # sino porque cambia con cada CA y no describe el repo, describe esta VM.

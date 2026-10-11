@@ -1,0 +1,32 @@
+#!/bin/sh
+# Gestionado por Ansible (rol engram_backup). Backup completo del hub en un tar:
+#   - engram_cloud.dump        pg_dump -Fc de la base (la memoria)
+#   - var/lib/zerotier-one     identidad del controller y la red
+#   - var/lib/caddy/.../caddy  PKI interna (la CA en la que confían los clientes)
+#   - etc/engram               secretos, token de admin, principal de clients
+# Sin cualquiera de los tres últimos, un restore "funciona" pero los clientes no
+# vuelven a conectar.
+set -eu
+
+dir={{ engram_backup_dir }}
+keep={{ engram_backup_keep }}
+stamp=$(date +%Y%m%d-%H%M%S)
+out="$dir/engram-hub-$stamp.tar.gz"
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp" "$out.part"' EXIT
+
+runuser -u postgres -- pg_dump -Fc engram_cloud > "$tmp/engram_cloud.dump"
+
+umask 077
+rc=0
+tar -czf "$out.part" \
+  -C / var/lib/zerotier-one var/lib/caddy/.local/share/caddy etc/engram \
+  -C "$tmp" engram_cloud.dump || rc=$?
+# 1 = algún archivo cambió mientras se leía (zerotier reescribe su estado);
+# el tar es válido. Cualquier otro código es un fallo real.
+[ "$rc" -le 1 ] || exit "$rc"
+
+mv "$out.part" "$out"
+ls -1t "$dir"/engram-hub-*.tar.gz | tail -n +"$((keep + 1))" | xargs -r rm --
+echo "backup: $out"

@@ -1,0 +1,28 @@
+#!/bin/sh
+# Concede un proyecto al usuario clients con el token de admin, por loopback.
+# Solo lo ejecuta root (vía sudo desde engram-grant-gate). Valida de nuevo el
+# nombre: sudo no restringe argumentos.
+set -eu
+
+project="${1:-}"
+case "$project" in
+  "" | *[!A-Za-z0-9._-]*) echo "proyecto inválido" >&2; exit 2 ;;
+esac
+[ "${#project}" -le 64 ] || { echo "proyecto inválido" >&2; exit 2; }
+
+api="http://127.0.0.1:$(sed -n 's/^Environment=ENGRAM_PORT=//p' /etc/systemd/system/engram-cloud.service)"
+token="$(cat /etc/engram/admin.tok)"
+clients="$(cat /etc/engram/clients.id)"
+
+if curl -fsS -H "Authorization: Bearer $token" "$api/admin/users/$clients/grants" \
+    | jq -e --arg p "$project" 'any(.[]; .project == $p)' >/dev/null; then
+  echo "ya concedido: $project"
+  exit 0
+fi
+
+curl -fsS -X POST -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+  -d "$(jq -cn --arg p "$project" '{project: $p}')" \
+  "$api/admin/users/$clients/grants" >/dev/null
+# sudo limpia el entorno (SSH_CLIENT no llega): el origen queda en el log de sshd.
+logger -t engram-grant "grant concedido: $project (vía ${SUDO_USER:-root})"
+echo "concedido: $project"

@@ -1,0 +1,122 @@
+---
+# Base de la VM de engram: todos los paquetes, firewall y sshd.
+#
+# Los paquetes van aquí, y no en el rol de cada servicio, por el restore:
+# zerotier-one genera una identidad nueva y Caddy una CA nueva al arrancar por
+# primera vez. engram_restore tiene que poder pisarlas *después* de instalar y
+# *antes* de que zerotier y caddy se configuren encima.
+
+- name: Llave del repositorio de ZeroTier
+  ansible.builtin.get_url:
+    url: https://download.zerotier.com/contact%40zerotier.com.gpg
+    dest: /etc/apt/keyrings/zerotier.asc
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Repositorio de ZeroTier
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/zerotier.sources
+    content: |
+      Types: deb
+      URIs: https://download.zerotier.com/debian/trixie
+      Suites: trixie
+      Components: main
+      Signed-By: /etc/apt/keyrings/zerotier.asc
+    owner: root
+    group: root
+    mode: "0644"
+  register: zt_repo
+
+- name: Refrescar la caché de apt si el repositorio es nuevo
+  ansible.builtin.apt:
+    update_cache: true
+  when: zt_repo.changed
+  # cache_valid_time de abajo no basta: si la caché tiene menos de una hora no se
+  # refresca, y el repo recién añadido no existe para apt (`No package matching
+  # 'zerotier-one'`, visto en la primera pasada).
+
+- name: Paquetes del hub
+  ansible.builtin.apt:
+    name:
+      - "zerotier-one={{ zerotier_version }}"
+      - "postgresql-{{ postgresql_major }}"
+      - python3-psycopg2   # community.postgresql
+      - caddy
+      - nftables
+      - sqlite3
+      - jq
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Retener zerotier-one en la versión fijada
+  ansible.builtin.dpkg_selections:
+    name: zerotier-one
+    selection: hold
+
+- name: Firewall del host
+  ansible.builtin.template:
+    src: nftables.conf.j2
+    dest: /etc/nftables.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: nft -c -f %s
+  notify: Recargar nftables
+  # Segunda capa además de las flow rules de ZeroTier: aunque alguien cambie las
+  # rules del controller, la VM sigue sin aceptar nada que no sea SSH desde la
+  # LAN o el 443 por la overlay.
+
+- name: nftables activo al boot
+  ansible.builtin.service:
+    name: nftables
+    state: started
+    enabled: true
+
+- name: Restringir quién entra por SSH y desde dónde
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/10-engram.conf
+    content: |
+      # debian (administración) solo desde la LAN. engram-grant puede llegar
+      # también por ZeroTier, pero su llave fuerza un único comando.
+      AllowUsers debian@{{ lan_cidr }} engram-grant
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+    owner: root
+    group: root
+    mode: "0644"
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Recargar sshd
+  # validate prueba el drop-in como config completo antes de instalarlo: una
+  # errata aquí no llega a recargarse y no deja la VM sin SSH.
+
+# --- Identidades que el restore necesita ya creadas ---
+
+- name: Usuario de servicio engram
+  ansible.builtin.user:
+    name: engram
+    system: true
+    home: /var/lib/engram
+    shell: /usr/sbin/nologin
+
+- name: Rol de Postgres para engram
+  community.postgresql.postgresql_user:
+    name: engram
+    login_unix_socket: /var/run/postgresql
+  become: true
+  become_user: postgres
+  # Sin contraseña: el servicio corre como el usuario de sistema `engram` y
+  # entra por el socket local con autenticación peer (pg_hba de Debian por
+  # defecto). Un secreto menos que generar, guardar y rotar.
+
+- name: Base de datos engram_cloud
+  community.postgresql.postgresql_db:
+    name: engram_cloud
+    owner: engram
+    login_unix_socket: /var/run/postgresql
+  become: true
+  become_user: postgres
+
+- name: Aplicar firewall y sshd antes de seguir
+  ansible.builtin.meta: flush_handlers

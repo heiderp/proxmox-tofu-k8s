@@ -1,0 +1,33 @@
+# Gestionado por Ansible (rol engram_cloud).
+[Unit]
+Description=Engram Cloud (hub de memoria)
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+User=engram
+Group=engram
+EnvironmentFile=/etc/engram/secrets.env
+Environment=ENGRAM_DATABASE_URL={{ engram_database_url }}
+Environment=ENGRAM_CLOUD_HOST=127.0.0.1
+Environment=ENGRAM_PORT={{ engram_cloud_port }}
+Environment=ENGRAM_DATA_DIR=/var/lib/engram
+# El acceso real lo deciden los grants del usuario clients; el allowlist del
+# servidor no puede expresar "lo que tenga grant", así que va abierto.
+Environment=ENGRAM_CLOUD_ALLOWED_PROJECTS=*
+ExecStart=/usr/local/bin/engram cloud serve
+Restart=on-failure
+RestartSec=5
+
+# 1 GB para toda la VM: Postgres, Caddy y zerotier-one también viven aquí.
+MemoryMax=384M
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/engram
+
+[Install]
+WantedBy=multi-user.target

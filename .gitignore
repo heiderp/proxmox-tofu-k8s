@@ -25,3 +25,6 @@ TODO.md
 # --- Sistema ---
 .DS_Store
 *.swp
+
+# --- Artefactos que el playbook trae de las VMs (CA de Caddy, etc.) ---
+ansible/artifacts/

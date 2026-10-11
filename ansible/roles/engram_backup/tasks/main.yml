@@ -1,0 +1,60 @@
+---
+# Backup diario del hub. Persistent=true porque el host suele estar apagado: si
+# la hora del timer pasa con la VM apagada, el backup corre al arrancar.
+# El PC se trae una copia (clients/engram/engram-hub-backup-pull) para que el
+# backup no viva solo en el mismo disco que protege.
+
+- name: Directorio de backups
+  ansible.builtin.file:
+    path: "{{ engram_backup_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Script de backup
+  ansible.builtin.template:
+    src: engram-backup.j2
+    dest: /usr/local/sbin/engram-backup
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Servicio y timer
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - name: engram-backup.service
+      content: |
+        [Unit]
+        Description=Backup del hub de engram
+        After=postgresql.service
+
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/sbin/engram-backup
+    - name: engram-backup.timer
+      content: |
+        [Unit]
+        Description=Backup diario del hub de engram
+
+        [Timer]
+        OnCalendar=daily
+        Persistent=true
+        RandomizedDelaySec=10m
+
+        [Install]
+        WantedBy=timers.target
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Timer activo
+  ansible.builtin.systemd_service:
+    name: engram-backup.timer
+    state: started
+    enabled: true
+    daemon_reload: true
