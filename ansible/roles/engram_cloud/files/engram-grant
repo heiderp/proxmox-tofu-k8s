@@ -5,14 +5,21 @@
 set -eu
 
 project="${1:-}"
-case "$project" in
-  "" | *[!A-Za-z0-9._-]*) echo "proyecto inválido" >&2; exit 2 ;;
-esac
-[ "${#project}" -le 64 ] || { echo "proyecto inválido" >&2; exit 2; }
 
 api="http://127.0.0.1:$(sed -n 's/^Environment=ENGRAM_PORT=//p' /etc/systemd/system/engram-cloud.service)"
 token="$(cat /etc/engram/admin.tok)"
 clients="$(cat /etc/engram/clients.id)"
+
+if [ "$project" = "--list" ]; then
+  curl -fsS -H "Authorization: Bearer $token" "$api/admin/users/$clients/grants" \
+    | jq -r '.[].project' | sort
+  exit 0
+fi
+
+case "$project" in
+  "" | -* | *[!A-Za-z0-9._-]*) echo "proyecto inválido" >&2; exit 2 ;;
+esac
+[ "${#project}" -le 64 ] || { echo "proyecto inválido" >&2; exit 2; }
 
 if curl -fsS -H "Authorization: Bearer $token" "$api/admin/users/$clients/grants" \
     | jq -e --arg p "$project" 'any(.[]; .project == $p)' >/dev/null; then

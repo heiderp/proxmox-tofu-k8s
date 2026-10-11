@@ -1,22 +1,32 @@
 #!/bin/sh
 # Comando forzado de las llaves de engram-grant (authorized_keys, restrict).
-# Lo único que deja hacer: pedir el grant de UN proyecto para el usuario clients.
+# Lo único que deja hacer:
 #
-#   ssh engram-grant@hub <proyecto>
+#   ssh engram-grant@hub <proyecto>   conceder UN proyecto al usuario clients
+#   ssh engram-grant@hub --list       listar los proyectos concedidos
+#
+# --list existe porque el autosync solo baja proyectos enrolados, y un cliente
+# nuevo no tiene memorias locales de los proyectos que ya hay en el hub: sin
+# saber cuáles son, nunca los enrolaría (la laptop se quedó en 3 de 110).
 set -eu
 
-project="${SSH_ORIGINAL_COMMAND:-}"
+cmd="${SSH_ORIGINAL_COMMAND:-}"
 
-case "$project" in
-  "" | *[!A-Za-z0-9._-]*)
-    echo "uso: ssh engram-grant@hub <proyecto>  ([A-Za-z0-9._-], máx. 64)" >&2
+if [ "$cmd" = "--list" ]; then
+  exec sudo -n /usr/local/sbin/engram-grant --list
+fi
+
+case "$cmd" in
+  "" | -* | *[!A-Za-z0-9._-]*)
+    echo "uso: ssh engram-grant@hub <proyecto> | --list" >&2
+    echo "     proyecto: [A-Za-z0-9._-], sin '-' inicial, máx. 64" >&2
     exit 2
     ;;
 esac
 
-if [ "${#project}" -gt 64 ]; then
+if [ "${#cmd}" -gt 64 ]; then
   echo "nombre de proyecto demasiado largo" >&2
   exit 2
 fi
 
-exec sudo -n /usr/local/sbin/engram-grant "$project"
+exec sudo -n /usr/local/sbin/engram-grant "$cmd"

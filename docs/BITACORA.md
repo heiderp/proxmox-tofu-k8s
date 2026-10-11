@@ -938,7 +938,10 @@ dónde ponerla, con la misma disciplina (OpenTofu, Ansible, versiones fijadas, p
 - **Postgres sin contraseña**: socket local con autenticación peer para el usuario de sistema
   `engram`. Un secreto menos que generar, guardar y rotar.
 
-**Verificación / checkpoint:** `tofu destroy` + `apply` de la VM y el playbook con
+**Verificación / checkpoint:** PC (LAN) y laptop (ZeroTier) migrados con 110 memorias y el
+mismo hash de contenido. Prueba cruzada en vivo: un `engram save` hecho desde un proceso aparte,
+como hará el MCP de Claude, llega a la otra máquina sin `sync` manual (38 s de PC a laptop y 36 s
+de laptop a PC), y los borrados también se propagan (47 s). Reconstrucción: `tofu destroy` + `apply` de la VM y el playbook con
 `engram_restore_archive`. Tras la reconstrucción coinciden el nodo ZT, el network ID y la huella
 de la CA, y el token del PC emitido antes del destroy sigue respondiendo 200. Una segunda pasada
 del playbook da `changed=0`. Desde la LAN solo responde el 22; el 443, el 5432, el 18080 y el
@@ -1021,6 +1024,8 @@ El segundo, descubierto al preparar la Fase 3 y con efecto directo sobre la Fase
 | 2026-10-11 | `No package matching 'zerotier-one'` con el repo recién añadido | `cache_valid_time` no refresca una caché de menos de una hora | `apt update` forzado cuando cambia el archivo del repo |
 | 2026-10-11 | 401 con el token de admin recién emitido | La regex capturaba el **prefijo** que el bootstrap imprime antes del token, y luego cortaba en el `-` que el token contiene | `egc_[A-Za-z0-9_-]{40,}`. Durante la depuración se mostró en pantalla parte de un token, que se revocó al momento (`--revoke-existing`) |
 | 2026-10-11 | El PC unido a ZeroTier se quedaba en `REQUESTING_CONFIGURATION`, con `tcpFallbackActive: true` | No recibía respuesta UDP de los roots, caía a relay TCP y no descubría el camino directo al hub por la LAN, aunque el UDP entre ambos sí pasaba. **Causa no determinada**: se sospechó de Surfshark, pero la laptop, con la misma VPN, funciona directo | Con una pista `try` hacia la IP fija del hub en el `local.conf` del cliente funciona. Al final el PC no usa la overlay: va por la LAN |
+| 2026-10-11 | La laptop migrada sincronizaba sana (`healthy`) pero tenía 3 memorias de 110 | El autosync solo baja proyectos **enrolados**, y `engram-enroll` solo enrolaba proyectos con memorias locales: un cliente nuevo nunca pedía los que ya estaban en el hub | La puerta de grants gana un `--list` (sigue sin shell) y `engram-enroll` enrola también lo que hay en el hub. La laptop pasó a 110 en 5 s, con el mismo hash de contenido que el PC |
+| 2026-10-11 | `ssh … engram-grant@hub --list` → `unknown option -- -` | `getopt` de ssh reordena argumentos: toma `--list` como opción suya aunque vaya detrás del destino | `--` antes del destino |
 | 2026-10-11 | El disco de la VM salió `raw` aunque el código decía `qcow2`, con diff perpetuo en el plan | El provider bpg ignora `file_format` en un clone | Declarar `raw`. En almacenamiento de directorio, raw no admite snapshots: la protección es el backup diario |
 | 2026-08-28 | El patch de `KubeletConfiguration` se ignoraba sin error | `nodeRegistration.patches` es de `v1beta3`; en `v1beta4` va a nivel raíz. kubeadm sólo emite un warning | Mover `patches:` a la raíz de `InitConfiguration` y comprobar el `--dry-run` |
 | 2026-08-28 | CoreDNS en `ContainerCreating`: `failed to find plugin "loopback" in path [/usr/lib/cni]` | containerd de Debian usa `bin_dir=/usr/lib/cni` (vacío); Cilium instala en `/opt/cni/bin` | `bin_dir = "/opt/cni/bin"` en `/etc/containerd/config.toml` + `systemctl restart containerd` |

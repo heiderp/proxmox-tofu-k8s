@@ -6,6 +6,10 @@
 #   1. grant en el servidor: `ssh engram-grant@hub <proyecto>` (llave con comando
 #      forzado: no puede hacer otra cosa)
 #   2. enroll en el cliente: `engram cloud enroll <proyecto>`
+# Además enrola los proyectos que ya existen en el hub (`--list`): el autosync
+# solo baja proyectos enrolados, y un cliente nuevo no tiene memorias locales de
+# ellos. Sin esto, la laptop se quedó con 3 memorias de 110.
+#
 # Si el hub no responde, no pasa nada: la memoria sigue en local y el timer lo
 # reintenta.
 set -eu
@@ -14,28 +18,38 @@ set -eu
 db="$ENGRAM_DATA_DIR/engram.db"
 key="$HOME/.ssh/engram-grant_${ENGRAM_CLIENT_ID}"
 
-# Solo proyectos con observaciones: las sesiones registran cualquier directorio
-# en el que se abrió Claude (Code, dev...), y esos no son memoria.
-projects=$(sqlite3 "$db" \
+# Host keys desechables, como en ansible.cfg: cada destroy+apply las regenera.
+# La llave solo puede pedir un grant o listarlos.
+gate() {
+  for host in $ENGRAM_HUB_LAN $ENGRAM_HUB_ZT; do
+    if ssh -i "$key" -o BatchMode=yes -o ConnectTimeout=4 \
+         -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+         -- "engram-grant@$host" "$1"; then
+      # `--` antes del destino: getopt de ssh reordena argumentos y se comería
+      # "--list" como opción suya aunque vaya detrás del host.
+      return 0
+    fi
+  done
+  return 1
+}
+
+enrolled=$(sqlite3 "$db" "SELECT project FROM sync_enrolled_projects")
+
+# Locales: solo proyectos con observaciones. Las sesiones registran cualquier
+# directorio en el que se abrió Claude (Code, dev...), y esos no son memoria.
+local_projects=$(sqlite3 "$db" \
   "SELECT DISTINCT project FROM observations
-   WHERE deleted_at IS NULL AND ifnull(project, '') <> ''
-     AND project NOT IN (SELECT project FROM sync_enrolled_projects)")
+   WHERE deleted_at IS NULL AND ifnull(project, '') <> ''")
+hub_projects=$(gate --list 2>/dev/null || true)
+
+projects=$(printf '%s\n%s\n' "$local_projects" "$hub_projects" | sort -u \
+  | grep -vxF -e '' $(printf -- '-e %s ' $enrolled) || true)
 
 [ -n "$projects" ] || exit 0
 
 for p in $projects; do
-  granted=0
-  for host in $ENGRAM_HUB_LAN $ENGRAM_HUB_ZT; do
-    # Host keys desechables, como en ansible.cfg: cada destroy+apply las
-    # regenera. La llave solo puede pedir un grant.
-    if ssh -i "$key" -o BatchMode=yes -o ConnectTimeout=4 \
-         -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
-         "engram-grant@$host" "$p"; then
-      granted=1
-      break
-    fi
-  done
-  if [ "$granted" = 1 ]; then
+  # Los del hub ya tienen grant; pedirlo otra vez es idempotente ("ya concedido").
+  if gate "$p"; then
     "$HOME/.local/bin/engram" cloud enroll "$p"
   else
     echo "hub no accesible: $p queda pendiente" >&2
