@@ -872,6 +872,71 @@ nadie intervenga.
 
 ---
 
+## Servicio auxiliar — Hub de memoria de engram ✅
+
+**Qué construye:** una VM aparte del cluster (VMID 104, `192.168.1.54`) que sirve de hub para
+[engram](https://github.com/Gentleman-Programming/engram), la memoria persistente de los agentes
+de código. Corre Engram Cloud autoalojado sobre Postgres, con Caddy delante y un controller de
+ZeroTier propio, y la comparten el PC de trabajo y una laptop, desde casa o desde fuera.
+
+**Por qué existe:** la memoria vivía en un SQLite del PC, sin copia y sin forma de usarla desde
+otra máquina. No es una fase del roadmap y no toca el cluster: vive en el homelab porque ahí hay
+dónde ponerla, con la misma disciplina (OpenTofu, Ansible, versiones fijadas, prueba de
+`destroy`+`apply`).
+
+**Decisiones tomadas:**
+
+- **Engram Cloud v3 y no un sync casero.** El primer diseño (MCP por SSH contra la VM y
+  reconciliación con `engram sync`) se probó antes de construirlo, sobre copias del DB. La versión
+  instalada entonces (`dev`) **perdía escrituras** (`Nothing new to sync` con datos nuevos) y
+  **duplicaba todo** al importar: de 106 a 212 observaciones. No tenía un ID global por memoria.
+  La v3.3.2 trae `sync_id`, sync por mutaciones y un servidor autoalojable con autosync. El
+  mismo gate sobre la v3 (dos clientes, escrituras divergentes, tres rondas) convergió con el
+  hash de contenido idéntico, y el SQLite local sigue siendo autoritativo: con el host apagado se
+  trabaja en local y el autosync se pone al día al volver (~33 s medidos).
+- **VM propia, no un pod.** La Fase 9 rompe el cluster a propósito; la memoria no debe caer con
+  él. Por lo mismo, **state de OpenTofu separado** (`infra/engram/`): un `tofu destroy` del
+  cluster, que es como se prueba su bootstrap, no puede llevársela.
+- **Disco fuera del thin pool**, en el almacenamiento de directorio del root FS (`local`, con
+  `images` habilitado para ello). Un thin pool lleno corrompe todo lo que tiene dentro, y el
+  escenario 7 de la Fase 9 va de llenar discos.
+- **ZeroTier con controller propio en la misma VM.** Tailscale SaaS exige registrarse con un IdP
+  (Google, GitHub…), y se descartó por ese vínculo. Headscale no necesita cuentas, pero su
+  coordinador necesita un VPS siempre encendido: en el homelab se apaga con el host y no va bien
+  detrás de Cloudflare Tunnel. El controller integrado de `zerotier-one` comparte ciclo de vida
+  con el servicio al que da acceso, así que no resta disponibilidad: si la VM está apagada, no
+  hay memoria a la que llegar de todos modos.
+- **Zero trust en dos capas.** Solo la VM y los clientes están en la red ZT: el host Proxmox no
+  entra y no hay router de subred. Las flow rules dejan pasar TCP 443 y 22 hacia el hub y nada
+  más, y los clientes no se ven entre sí. nftables en la VM repite la política por si alguien
+  toca las rules: SSH solo desde la LAN y el 443 solo por la interfaz `zt*`.
+- **TLS con la CA interna de Caddy, para una IP.** Engram rechaza mandar el token por HTTP
+  (`bearer token requires an HTTPS remote URL`). Caddy emite el certificado para la IP de la
+  overlay, así que no hace falta DNS, dominio ni Let's Encrypt. Los clientes confían en esa CA
+  solo para el proceso engram (`SSL_CERT_FILE`), no en todo el sistema.
+- **Un token gestionado por máquina**, bajo un usuario `member` sin poder de administración. Una
+  laptop perdida es una revocación y nada más. El token de admin no sale de root en la VM.
+- **Grants por SSH con comando forzado.** El servidor no admite grant comodín, así que cada
+  proyecto nuevo necesita un grant. Cada cliente tiene una llave
+  `restrict,command="engram-grant-gate"` que solo puede pedir un grant: no hay shell, ni túneles,
+  ni lectura del token. El script valida el nombre dos veces y llama a la API por loopback vía
+  `sudo`.
+- **Un único `engram serve` por máquina hace el autosync**, como servicio de usuario. Claude Code
+  lanza un `engram mcp` por sesión abierta, y varios bucles de sync sobre el mismo SQLite
+  competirían. Los MCP escriben en local y el serve sube y baja.
+- **Postgres sin contraseña**: socket local con autenticación peer para el usuario de sistema
+  `engram`. Un secreto menos que generar, guardar y rotar.
+
+**Verificación / checkpoint:** `tofu destroy` + `apply` de la VM y el playbook con
+`engram_restore_archive`. Tras la reconstrucción coinciden el nodo ZT, el network ID y la huella
+de la CA, y el token del PC emitido antes del destroy sigue respondiendo 200. Una segunda pasada
+del playbook da `changed=0`. Desde la LAN solo responde el 22; el 443, el 5432, el 18080 y el
+2019 no.
+
+**Incidencias:** ver la tabla de incidencias transversales (2026-10-11).
+
+---
+
 ## Línea de tiempo
 
 | Fase | Fecha | Duración real | Notas |
@@ -887,6 +952,7 @@ nadie intervenga.
 | 8 — Observabilidad | — | — | |
 | 9 — CKA | — | — | |
 | 10 — CAPI / Talos | — | — | Opcional |
+| Aux — Hub de engram | 2026-10-11 | ~1 día | VM 104 fuera del cluster y del thin pool: Engram Cloud 3.3.2 + Postgres 17 + Caddy + ZeroTier con controller propio. Gate previo que descartó el diseño con `engram sync` (pérdida de escrituras y duplicados). Reconstrucción con restore verificada: misma red, misma CA y tokens válidos (ver [hub de memoria](#servicio-auxiliar--hub-de-memoria-de-engram-)) |
 
 ---
 
@@ -937,6 +1003,13 @@ El segundo, descubierto al preparar la Fase 3 y con efecto directo sobre la Fase
 | 2026-09-11 | HTTP devolvía 200 en claro donde debía haber un 301 | Las rutas de aplicación se enganchan a **todos** los listeners del Gateway, y en HTTP el hostname exacto de la app gana al `*.dominio` de la redirección | `sectionName: https` en cada ruta de aplicación; el listener HTTP se queda solo con la redirección |
 | 2026-09-11 | El chart de MetalLB 0.16 despliega un DaemonSet de FRR que nadie pidió | `frrk8s.enabled` viene en **`true`** por defecto desde esa versión: backend BGP, seis CRDs más y un webhook propio | `frrk8s.enabled: false`. En una L2 doméstica con un router que no habla BGP no hace nada |
 | 2026-09-11 | cert-manager instalado y el `ClusterIssuer` fallando por CRD inexistente | `crds.enabled` viene en **`false`** en el chart: instala los controladores y ningún CRD, y el fallo aparece un paso después | `crds.enabled: true` y `keep: true`, para que quitar el release no se lleve por delante los Certificate del cluster |
+| 2026-10-11 | `engram sync` respondía `Nothing new to sync` con datos nuevos, y al importar duplicaba todo (106 → 212) | La build `dev` decide qué es nuevo sin un ID global por memoria: no tiene `sync_id` | Engram Cloud v3.3.2, con `sync_id` y sync por mutaciones. Gate con dos clientes antes de construir nada |
+| 2026-10-11 | Al sincronizar, las memorias de un proyecto aparecían en el export de otro | La build `dev` guardaba todo `mem_save` en una única sesión `manual-save` compartida, y el sync la reasignaba a un proyecto | `normalize-legacy.sql` antes del primer enroll: una sesión `manual-save-<proyecto>` por proyecto |
+| 2026-10-11 | `--grant-project '*'` → `project is required`, y el admin quedaba creado sin token | No hay grant comodín, y el bootstrap no es atómico: valida los grants después de crear el admin | Bootstrap sin grants; los grants van por la API al usuario `clients`. El admin varado se recupera con `bootstrap recover-token` |
+| 2026-10-11 | Tras reiniciar Caddy, los clientes fallaban con `x509: certificate signed by unknown authority` | Sin su directorio de datos, Caddy genera una CA nueva | La PKI de Caddy entra en el backup diario y el restore la repone antes de configurar Caddy |
+| 2026-10-11 | `No package matching 'zerotier-one'` con el repo recién añadido | `cache_valid_time` no refresca una caché de menos de una hora | `apt update` forzado cuando cambia el archivo del repo |
+| 2026-10-11 | 401 con el token de admin recién emitido | La regex capturaba el **prefijo** que el bootstrap imprime antes del token, y luego cortaba en el `-` que el token contiene | `egc_[A-Za-z0-9_-]{40,}`. Durante la depuración se mostró en pantalla parte de un token, que se revocó al momento (`--revoke-existing`) |
+| 2026-10-11 | El disco de la VM salió `raw` aunque el código decía `qcow2`, con diff perpetuo en el plan | El provider bpg ignora `file_format` en un clone | Declarar `raw`. En almacenamiento de directorio, raw no admite snapshots: la protección es el backup diario |
 | 2026-08-28 | El patch de `KubeletConfiguration` se ignoraba sin error | `nodeRegistration.patches` es de `v1beta3`; en `v1beta4` va a nivel raíz. kubeadm sólo emite un warning | Mover `patches:` a la raíz de `InitConfiguration` y comprobar el `--dry-run` |
 | 2026-08-28 | CoreDNS en `ContainerCreating`: `failed to find plugin "loopback" in path [/usr/lib/cni]` | containerd de Debian usa `bin_dir=/usr/lib/cni` (vacío); Cilium instala en `/opt/cni/bin` | `bin_dir = "/opt/cni/bin"` en `/etc/containerd/config.toml` + `systemctl restart containerd` |
 | 2026-08-28 | `sandbox_image` de containerd = `pause:3.8`, kubeadm espera `pause:3.10.1` | Valor por defecto del containerd de Debian, más antiguo que el que pide k8s 1.35 | Alinear con `kubeadm config images list \| grep pause` antes del `init` |

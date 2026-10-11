@@ -106,11 +106,32 @@ Sin versión = aún no instalado. Lo fijado vive en
 | `k8s-cp-1` | control plane | 2 | 4096 MB | 25 GB | 192.168.1.51 |
 | `k8s-wk-1` | worker | 2 | 2048 MB | 20 GB | 192.168.1.52 |
 | `k8s-wk-2` | worker | 2 | 2048 MB | 20 GB | 192.168.1.53 |
+| `engram` | hub de memoria, fuera del cluster | 1 | 1024 MB | 8 GB en `local` | 192.168.1.54 |
 
 Rangos reservados fuera del DHCP: `.50-.59` para las VMs, `.200-.220` para MetalLB.
 
 Host: 15,7 GB de RAM, 4 cores, SSD de 119 GB. Los 65 GB de disco salen de un thin pool de
 66,87 GB — casi 1:1 a propósito: un thin pool lleno corrompe las tres VMs a la vez, no una.
+El disco de `engram` va fuera de ese pool, en el almacenamiento de directorio del root FS.
+
+---
+
+## Servicio auxiliar: hub de memoria
+
+Una VM aparte, que no forma parte del cluster, sirve de hub a
+[engram](https://github.com/Gentleman-Programming/engram), la memoria persistente de los agentes
+de código. Así el PC de trabajo y una laptop comparten la misma memoria, desde casa o desde fuera.
+
+- **Engram Cloud** autoalojado sobre Postgres. Cada cliente conserva su SQLite como fuente
+  autoritativa y sincroniza por autosync: con el host apagado se sigue trabajando en local.
+- **ZeroTier con controller propio** dentro de la VM, sin cuentas externas. Solo la VM y los
+  clientes están en la red, y las flow rules dejan pasar el 443 y el 22 hacia el hub y nada más.
+- **Caddy** con su CA interna emite el certificado para la IP de la overlay.
+- Un token por máquina, revocable, y grants por SSH con comando forzado.
+- State de OpenTofu propio (`infra/engram/`): reconstruir el cluster no toca la memoria. La
+  reconstrucción con restore conserva la red, la CA y los tokens; está verificada.
+
+Decisiones e incidencias en la [bitácora](docs/BITACORA.md#servicio-auxiliar--hub-de-memoria-de-engram-).
 
 ---
 
@@ -146,6 +167,7 @@ kubectl top nodes
 ```
 proxmox-tofu-k8s/
 ├── infra/          OpenTofu: definición de las VMs sobre Proxmox
+│   └── engram/          La VM del hub de memoria, con su propio state
 ├── ansible/        Configuración del SO y bootstrap de kubeadm
 │   ├── roles/
 │   └── playbooks/
@@ -153,6 +175,7 @@ proxmox-tofu-k8s/
 │   ├── bootstrap/        Application raíz (patrón app-of-apps)
 │   ├── infrastructure/   MetalLB, cert-manager, Envoy, Sealed Secrets, cloudflared
 │   └── apps/             Aplicaciones
+├── clients/engram/ Instalador y units del cliente del hub de memoria (PC, laptop)
 ├── scripts/        Utilidades que corren en el host Proxmox, fuera de Kubernetes
 └── docs/
     ├── BITACORA.md              Fases, decisiones y trayectoria de lo ejecutado
@@ -172,6 +195,14 @@ cd infra/ && tofu destroy -auto-approve
 tofu apply -auto-approve
 ansible-playbook -i ../ansible/inventory.yml ../ansible/playbooks/cluster.yml
 kubectl apply -f ../gitops/bootstrap/root-app.yaml
+```
+
+El hub de memoria se reconstruye aparte, y con su backup conserva la red, la CA y los tokens:
+
+```bash
+cd infra/engram/ && tofu destroy && tofu apply
+cd ../../ansible/ && ansible-playbook playbooks/engram.yml \
+  -e engram_restore_archive=~/Backups/engram-hub/engram-hub-<fecha>.tar.gz
 ```
 
 ---
